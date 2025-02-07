@@ -1,0 +1,26 @@
+{
+  "name": "libhash",
+  "version": "1.1.3",
+  "author": "Matthew Zito",
+  "repo": "exbotanical/libhash",
+  "license": "MIT",
+  "description": "A simple open-addressed, double-hashed hash table",
+  "keywords": ["hashing", "hash table", "data structure", "open addressing"],
+  "src": [
+    "src/hash_set.c",
+    "src/hash_table.c",
+    "src/hash.c",
+    "src/hash.h",
+    "src/prime.c",
+    "src/prime.h",
+    "src/list.c",
+    "src/list.h",
+    "include/libhash.h"
+  ],
+  "dependencies": {
+    "strdup": "*"
+  },
+  "development": {
+    "exbotanical/libtap": "*"
+  }
+}
