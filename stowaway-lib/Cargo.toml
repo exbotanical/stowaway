@@ -1,0 +1,22 @@
+[package]
+name = "stowaway-lib"
+version = "0.1.0"
+edition = "2021"
+authors = ["Matthew Zito <exbotanical@protonmail.com>"]
+description = "Core library for Stowaway - a modern GNU Stow replacement"
+license = "MIT"
+
+[dependencies]
+serde = { workspace = true }
+serde_yaml = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+walkdir = { workspace = true }
+sha2 = { workspace = true }
+glob = { workspace = true }
+dirs = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+mockall = { workspace = true }

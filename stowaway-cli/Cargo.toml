@@ -1,0 +1,18 @@
+[package]
+name = "stowaway"
+version = "0.1.0"
+edition = "2021"
+authors = ["Matthew Zito <exbotanical@protonmail.com>"]
+description = "A modern GNU Stow replacement with variable interpolation - CLI tool"
+license = "MIT"
+
+[[bin]]
+name = "stowaway"
+path = "src/main.rs"
+
+[dependencies]
+stowaway-lib = { path = "../stowaway-lib" }
+clap = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
