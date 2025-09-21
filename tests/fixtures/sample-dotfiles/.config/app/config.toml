@@ -1,0 +1,36 @@
+[user]
+name = "@user@"
+email = "@email@"
+theme = "@theme@"
+
+[editor]
+default = "@editor@"
+backup_files = true
+auto_save = true
+
+[system]
+hostname = "@hostname@"
+shell = "@shell@"
+
+[appearance]
+theme = "@theme@"
+font_size = 12
+line_numbers = true
+
+[behavior]
+auto_complete = true
+syntax_highlighting = true
+word_wrap = false
+
+[paths]
+home = "/home/@user@"
+config = "/home/@user@/.config"
+cache = "/home/@user@/.cache"
+
+[network]
+proxy = ""
+timeout = 30
+
+# This file should be interpolated
+# User: @user@
+# Theme: @theme@
