@@ -1,13 +1,14 @@
 pub mod config;
+pub mod context;
 pub mod engine;
-pub mod lifecycle;
 pub mod error;
+pub mod file_entry;
 pub mod interpolation;
+pub mod lifecycle;
 pub mod linking;
+pub mod logging;
 pub mod store;
 pub mod validation;
-pub mod context;
-pub mod file_entry;
 
 pub use error::{Result, StowawayError};
 
@@ -25,7 +26,8 @@ impl Stowaway {
     }
 
     pub fn run<P: AsRef<Path>>(&self, source: P, target: P, dry_run: bool) -> Result<()> {
-        self.engine.execute(source.as_ref(), target.as_ref(), dry_run)
+        self.engine
+            .execute(source.as_ref(), target.as_ref(), dry_run)
     }
 
     pub fn rollback(&self, hash: &str) -> Result<()> {

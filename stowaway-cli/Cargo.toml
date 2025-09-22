@@ -13,6 +13,9 @@ path = "src/main.rs"
 [dependencies]
 stowaway-lib = { path = "../stowaway-lib" }
 clap = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-appender = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

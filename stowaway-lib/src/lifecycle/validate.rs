@@ -1,11 +1,15 @@
+use crate::error::Result;
 use crate::validation::Validator;
-use crate::{context::StowawayContext, lifecycle::LifecyclePhase, validation::FileSystemValidator, StowawayError};
-use crate::error::{Result};
+use crate::{
+    context::StowawayContext, lifecycle::LifecyclePhase, validation::FileSystemValidator,
+    StowawayError,
+};
+use tracing::info;
 
 pub struct ValidatePhase;
 impl LifecyclePhase for ValidatePhase {
     fn execute(&self, context: &mut StowawayContext) -> Result<()> {
-        println!("Validating conflicts for {} files", context.files.len());
+        info!(file_count = context.files.len(), "Validating conflicts");
 
         let validator = FileSystemValidator;
         let mut conflicts = Vec::new();
@@ -15,25 +19,33 @@ impl LifecyclePhase for ValidatePhase {
 
             match validation_result.conflict_type {
                 crate::validation::ConflictType::None => continue,
-                crate::validation::ConflictType::SymlinkExists if validation_result.is_managed => continue,
+                crate::validation::ConflictType::SymlinkExists if validation_result.is_managed => {
+                    continue
+                }
                 _ => {
-                    conflicts.push((file_entry.target_path.clone(), validation_result.conflict_type));
+                    conflicts.push((
+                        file_entry.target_path.clone(),
+                        validation_result.conflict_type,
+                    ));
                 }
             }
         }
 
         if !conflicts.is_empty() {
-            let conflict_msg = conflicts.iter()
+            let conflict_msg = conflicts
+                .iter()
                 .map(|(path, conflict_type)| format!("{}: {:?}", path.display(), conflict_type))
                 .collect::<Vec<_>>()
                 .join("\n");
 
             return Err(StowawayError::Conflict(format!(
-                "Found {} conflicts:\n{}", conflicts.len(), conflict_msg
+                "Found {} conflicts:\n{}",
+                conflicts.len(),
+                conflict_msg
             )));
         }
 
-        println!("No conflicts found");
+        info!("No conflicts found");
         Ok(())
     }
 }
@@ -41,7 +53,7 @@ impl LifecyclePhase for ValidatePhase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{StowawayConfig, InterpolationConfig};
+    use crate::config::{InterpolationConfig, StowawayConfig};
     use crate::context::StowawayContext;
     use crate::file_entry::FileEntry;
     use std::collections::HashMap;

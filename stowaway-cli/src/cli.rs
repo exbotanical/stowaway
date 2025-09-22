@@ -8,13 +8,44 @@ pub enum CliCommand {
         target: PathBuf,
         dry_run: bool,
         force: bool,
+        log_level: Option<String>,
+        log_format: Option<String>,
+        verbose: bool,
+        quiet: bool,
     },
     Rollback {
         hash: String,
+        log_level: Option<String>,
+        log_format: Option<String>,
+        verbose: bool,
+        quiet: bool,
     },
 }
 
 pub fn build_cli() -> Command {
+    let logging_args = vec![
+        Arg::new("verbose")
+            .short('v')
+            .long("verbose")
+            .help("Enable verbose logging (debug level)")
+            .action(ArgAction::SetTrue),
+        Arg::new("quiet")
+            .short('q')
+            .long("quiet")
+            .help("Enable quiet mode (errors only)")
+            .action(ArgAction::SetTrue),
+        Arg::new("log-level")
+            .long("log-level")
+            .value_name("LEVEL")
+            .help("Set log level (error, warn, info, debug, trace)")
+            .conflicts_with_all(["verbose", "quiet"]),
+        Arg::new("log-format")
+            .long("log-format")
+            .value_name("FORMAT")
+            .help("Set log format (human, json)")
+            .default_value("human"),
+    ];
+
     Command::new("stowaway")
         .version("0.1.0")
         .about("A modern GNU Stow replacement with variable interpolation")
@@ -51,7 +82,8 @@ pub fn build_cli() -> Command {
                         .long("force")
                         .help("Force operation even if conflicts exist")
                         .action(ArgAction::SetTrue),
-                ),
+                )
+                .args(logging_args.clone()),
         )
         .subcommand(
             Command::new("rollback")
@@ -61,7 +93,8 @@ pub fn build_cli() -> Command {
                         .value_name("HASH")
                         .help("Store version hash to rollback to")
                         .required(true),
-                ),
+                )
+                .args(logging_args),
         )
 }
 
@@ -74,9 +107,17 @@ pub fn parse_args() -> CliCommand {
             target: PathBuf::from(sub_matches.get_one::<String>("target").unwrap()),
             dry_run: sub_matches.get_flag("dry-run"),
             force: sub_matches.get_flag("force"),
+            log_level: sub_matches.get_one::<String>("log-level").cloned(),
+            log_format: sub_matches.get_one::<String>("log-format").cloned(),
+            verbose: sub_matches.get_flag("verbose"),
+            quiet: sub_matches.get_flag("quiet"),
         },
         Some(("rollback", sub_matches)) => CliCommand::Rollback {
             hash: sub_matches.get_one::<String>("hash").unwrap().clone(),
+            log_level: sub_matches.get_one::<String>("log-level").cloned(),
+            log_format: sub_matches.get_one::<String>("log-format").cloned(),
+            verbose: sub_matches.get_flag("verbose"),
+            quiet: sub_matches.get_flag("quiet"),
         },
         _ => unreachable!("Subcommand is required"),
     }
@@ -86,15 +127,19 @@ pub fn parse_args() -> CliCommand {
 mod tests {
     use super::*;
 
-
     #[test]
     fn test_parse_stow_command_basic() {
         let cmd = build_cli();
-        let matches = cmd.try_get_matches_from(vec![
-            "stowaway", "stow",
-            "--source", "/home/user/dotfiles",
-            "--target", "/home/user"
-        ]).unwrap();
+        let matches = cmd
+            .try_get_matches_from(vec![
+                "stowaway",
+                "stow",
+                "--source",
+                "/home/user/dotfiles",
+                "--target",
+                "/home/user",
+            ])
+            .unwrap();
 
         let result = match matches.subcommand() {
             Some(("stow", sub_matches)) => CliCommand::Stow {
@@ -102,12 +147,22 @@ mod tests {
                 target: PathBuf::from(sub_matches.get_one::<String>("target").unwrap()),
                 dry_run: sub_matches.get_flag("dry-run"),
                 force: sub_matches.get_flag("force"),
+                log_level: sub_matches.get_one::<String>("log-level").cloned(),
+                log_format: sub_matches.get_one::<String>("log-format").cloned(),
+                verbose: sub_matches.get_flag("verbose"),
+                quiet: sub_matches.get_flag("quiet"),
             },
             _ => panic!("Expected stow subcommand"),
         };
 
         match result {
-            CliCommand::Stow { source, target, dry_run, force } => {
+            CliCommand::Stow {
+                source,
+                target,
+                dry_run,
+                force,
+                ..
+            } => {
                 assert_eq!(source, PathBuf::from("/home/user/dotfiles"));
                 assert_eq!(target, PathBuf::from("/home/user"));
                 assert!(!dry_run);
@@ -120,13 +175,18 @@ mod tests {
     #[test]
     fn test_parse_stow_command_with_flags() {
         let cmd = build_cli();
-        let matches = cmd.try_get_matches_from(vec![
-            "stowaway", "stow",
-            "--source", "/home/user/dotfiles",
-            "--target", "/home/user",
-            "--dry-run",
-            "--force"
-        ]).unwrap();
+        let matches = cmd
+            .try_get_matches_from(vec![
+                "stowaway",
+                "stow",
+                "--source",
+                "/home/user/dotfiles",
+                "--target",
+                "/home/user",
+                "--dry-run",
+                "--force",
+            ])
+            .unwrap();
 
         let result = match matches.subcommand() {
             Some(("stow", sub_matches)) => CliCommand::Stow {
@@ -134,12 +194,22 @@ mod tests {
                 target: PathBuf::from(sub_matches.get_one::<String>("target").unwrap()),
                 dry_run: sub_matches.get_flag("dry-run"),
                 force: sub_matches.get_flag("force"),
+                log_level: sub_matches.get_one::<String>("log-level").cloned(),
+                log_format: sub_matches.get_one::<String>("log-format").cloned(),
+                verbose: sub_matches.get_flag("verbose"),
+                quiet: sub_matches.get_flag("quiet"),
             },
             _ => panic!("Expected stow subcommand"),
         };
 
         match result {
-            CliCommand::Stow { source, target, dry_run, force } => {
+            CliCommand::Stow {
+                source,
+                target,
+                dry_run,
+                force,
+                ..
+            } => {
                 assert_eq!(source, PathBuf::from("/home/user/dotfiles"));
                 assert_eq!(target, PathBuf::from("/home/user"));
                 assert!(dry_run);
@@ -152,13 +222,18 @@ mod tests {
     #[test]
     fn test_parse_stow_command_short_flags() {
         let cmd = build_cli();
-        let matches = cmd.try_get_matches_from(vec![
-            "stowaway", "stow",
-            "-s", "/home/user/dotfiles",
-            "-t", "/home/user",
-            "-n",
-            "-f"
-        ]).unwrap();
+        let matches = cmd
+            .try_get_matches_from(vec![
+                "stowaway",
+                "stow",
+                "-s",
+                "/home/user/dotfiles",
+                "-t",
+                "/home/user",
+                "-n",
+                "-f",
+            ])
+            .unwrap();
 
         let result = match matches.subcommand() {
             Some(("stow", sub_matches)) => CliCommand::Stow {
@@ -166,12 +241,22 @@ mod tests {
                 target: PathBuf::from(sub_matches.get_one::<String>("target").unwrap()),
                 dry_run: sub_matches.get_flag("dry-run"),
                 force: sub_matches.get_flag("force"),
+                log_level: sub_matches.get_one::<String>("log-level").cloned(),
+                log_format: sub_matches.get_one::<String>("log-format").cloned(),
+                verbose: sub_matches.get_flag("verbose"),
+                quiet: sub_matches.get_flag("quiet"),
             },
             _ => panic!("Expected stow subcommand"),
         };
 
         match result {
-            CliCommand::Stow { source, target, dry_run, force } => {
+            CliCommand::Stow {
+                source,
+                target,
+                dry_run,
+                force,
+                ..
+            } => {
                 assert_eq!(source, PathBuf::from("/home/user/dotfiles"));
                 assert_eq!(target, PathBuf::from("/home/user"));
                 assert!(dry_run);
@@ -184,19 +269,23 @@ mod tests {
     #[test]
     fn test_parse_rollback_command() {
         let cmd = build_cli();
-        let matches = cmd.try_get_matches_from(vec![
-            "stowaway", "rollback", "abc123def456"
-        ]).unwrap();
+        let matches = cmd
+            .try_get_matches_from(vec!["stowaway", "rollback", "abc123def456"])
+            .unwrap();
 
         let result = match matches.subcommand() {
             Some(("rollback", sub_matches)) => CliCommand::Rollback {
                 hash: sub_matches.get_one::<String>("hash").unwrap().clone(),
+                log_level: sub_matches.get_one::<String>("log-level").cloned(),
+                log_format: sub_matches.get_one::<String>("log-format").cloned(),
+                verbose: sub_matches.get_flag("verbose"),
+                quiet: sub_matches.get_flag("quiet"),
             },
             _ => panic!("Expected rollback subcommand"),
         };
 
         match result {
-            CliCommand::Rollback { hash } => {
+            CliCommand::Rollback { hash, .. } => {
                 assert_eq!(hash, "abc123def456");
             }
             _ => panic!("Expected Rollback command"),
@@ -208,30 +297,29 @@ mod tests {
         let cmd = build_cli();
 
         // Missing source
-        let result = cmd.clone().try_get_matches_from(vec![
-            "stowaway", "stow", "--target", "/home/user"
-        ]);
+        let result =
+            cmd.clone()
+                .try_get_matches_from(vec!["stowaway", "stow", "--target", "/home/user"]);
         assert!(result.is_err());
 
         // Missing target
         let result = cmd.clone().try_get_matches_from(vec![
-            "stowaway", "stow", "--source", "/home/user/dotfiles"
+            "stowaway",
+            "stow",
+            "--source",
+            "/home/user/dotfiles",
         ]);
         assert!(result.is_err());
 
         // Missing both
-        let result = cmd.clone().try_get_matches_from(vec![
-            "stowaway", "stow"
-        ]);
+        let result = cmd.clone().try_get_matches_from(vec!["stowaway", "stow"]);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_rollback_command_missing_hash() {
         let cmd = build_cli();
-        let result = cmd.try_get_matches_from(vec![
-            "stowaway", "rollback"
-        ]);
+        let result = cmd.try_get_matches_from(vec!["stowaway", "rollback"]);
         assert!(result.is_err());
     }
 

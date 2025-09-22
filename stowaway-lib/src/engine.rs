@@ -6,9 +6,11 @@ use crate::lifecycle::link::LinkPhase;
 use crate::lifecycle::scan::ScanPhase;
 use crate::lifecycle::validate::ValidatePhase;
 use crate::lifecycle::LifecyclePhase;
-use crate::linking::{Linker, FileSystemLinker};
-use crate::store::{StoreManager, FileSystemStoreManager, StoreVersion, };
+use crate::linking::{FileSystemLinker, Linker};
+use crate::store::{FileSystemStoreManager, StoreManager, StoreVersion};
 use std::path::Path;
+use std::time::Instant;
+use tracing::{debug, error, info, instrument, warn};
 use walkdir::WalkDir;
 
 pub struct StowawayEngine {
@@ -29,8 +31,24 @@ impl StowawayEngine {
         }
     }
 
+    #[instrument(skip(self), fields(source = %source.display(), target = %target.display(), dry_run))]
     pub fn execute(&self, source: &Path, target: &Path, dry_run: bool) -> Result<()> {
+        let start_time = Instant::now();
+
+        info!(
+            source_dir = %source.display(),
+            target_dir = %target.display(),
+            dry_run,
+            "Starting stow operation"
+        );
+
         let config = self.config_loader.load_config(source)?;
+        debug!(
+            variables_count = config.variables.len(),
+            include_patterns = config.interpolation.include_patterns.len(),
+            exclude_patterns = config.interpolation.exclude_patterns.len(),
+            "Loaded configuration"
+        );
 
         let mut context = StowawayContext {
             config,
@@ -41,39 +59,77 @@ impl StowawayEngine {
             store_hash: None,
         };
 
-        for phase in &self.phases {
+        for (phase_index, phase) in self.phases.iter().enumerate() {
+            let phase_start = Instant::now();
+            debug!(phase_index, "Starting lifecycle phase");
+
             phase.execute(&mut context)?;
+
+            debug!(
+                phase_index,
+                duration_ms = phase_start.elapsed().as_millis(),
+                "Completed lifecycle phase"
+            );
         }
+
+        let duration = start_time.elapsed();
+        info!(
+            files_processed = context.files.len(),
+            duration_ms = duration.as_millis(),
+            "Operation completed successfully"
+        );
 
         Ok(())
     }
 
+    #[instrument(skip(self), fields(hash))]
     pub fn rollback(&self, hash: &str) -> Result<()> {
+        let start_time = Instant::now();
+
+        info!(version = hash, "Starting rollback operation");
+
         let store_manager = FileSystemStoreManager::new()?;
         let linker = FileSystemLinker;
 
         let store_path = store_manager.get_store_path(hash);
 
         if !store_path.exists() {
+            error!(version = hash, "Store version does not exist");
             return Err(StowawayError::Store(format!(
-                "Store version {} does not exist", hash
+                "Store version {} does not exist",
+                hash
             )));
         }
 
+        debug!(store_path = %store_path.display(), "Found store version");
+
         // Get current version to know what to unlink
         if let Some(current_version) = store_manager.get_current_version()? {
-            // Remove current symlinks
+            info!(
+                current_version = current_version.hash,
+                "Removing current symlinks"
+            );
+
             let current_store_path = store_manager.get_store_path(&current_version.hash);
             if current_store_path.exists() {
-                self.remove_symlinks_for_store(&current_store_path, &current_version.source_dir, &linker)?;
+                self.remove_symlinks_for_store(
+                    &current_store_path,
+                    &current_version.source_dir,
+                    &linker,
+                )?;
+                debug!("Removed current symlinks");
             }
+        } else {
+            debug!("No current version found");
         }
 
         // Create symlinks for the rollback version
         let home_dir = dirs::home_dir().ok_or_else(|| {
+            error!("Could not determine home directory");
             StowawayError::Store("Could not determine home directory".to_string())
         })?;
 
+        debug!(target_dir = %home_dir.display(), "Creating symlinks for rollback version");
         self.create_symlinks_for_store(&store_path, &home_dir, &linker)?;
 
         // Update current version
@@ -88,15 +144,28 @@ impl StowawayEngine {
 
         store_manager.set_current_version(&rollback_version)?;
 
-        println!("Successfully rolled back to version {}", hash);
+        let duration = start_time.elapsed();
+        info!(
+            version = hash,
+            duration_ms = duration.as_millis(),
+            "Rollback operation completed successfully"
+        );
+
         Ok(())
     }
 
-    fn remove_symlinks_for_store(&self, store_path: &Path, target_dir: &Path, linker: &FileSystemLinker) -> Result<()> {
+    fn remove_symlinks_for_store(
+        &self,
+        store_path: &Path,
+        target_dir: &Path,
+        linker: &FileSystemLinker,
+    ) -> Result<()> {
         for entry in WalkDir::new(store_path) {
             let entry = entry?;
             if entry.file_type().is_file() {
-                let relative_path = entry.path().strip_prefix(store_path)
+                let relative_path = entry
+                    .path()
+                    .strip_prefix(store_path)
                     .map_err(|_| StowawayError::Store("Invalid store path".to_string()))?;
                 let target_path = target_dir.join(relative_path);
 
@@ -108,11 +177,18 @@ impl StowawayEngine {
         Ok(())
     }
 
-    fn create_symlinks_for_store(&self, store_path: &Path, target_dir: &Path, linker: &FileSystemLinker) -> Result<()> {
+    fn create_symlinks_for_store(
+        &self,
+        store_path: &Path,
+        target_dir: &Path,
+        linker: &FileSystemLinker,
+    ) -> Result<()> {
         for entry in WalkDir::new(store_path) {
             let entry = entry?;
             if entry.file_type().is_file() {
-                let relative_path = entry.path().strip_prefix(store_path)
+                let relative_path = entry
+                    .path()
+                    .strip_prefix(store_path)
                     .map_err(|_| StowawayError::Store("Invalid store path".to_string()))?;
                 let target_path = target_dir.join(relative_path);
 
@@ -153,8 +229,16 @@ interpolation:
 
     fn create_test_files(source_dir: &Path) {
         fs::create_dir_all(source_dir.join("config")).unwrap();
-        fs::write(source_dir.join("config/app.conf"), "user=@user@\ntheme=@theme@").unwrap();
-        fs::write(source_dir.join("config/settings.toml"), "[user]\nname = \"@user@\"").unwrap();
+        fs::write(
+            source_dir.join("config/app.conf"),
+            "user=@user@\ntheme=@theme@",
+        )
+        .unwrap();
+        fs::write(
+            source_dir.join("config/settings.toml"),
+            "[user]\nname = \"@user@\"",
+        )
+        .unwrap();
         fs::write(source_dir.join("readme.txt"), "This is a readme").unwrap();
         fs::write(source_dir.join("temp.tmp"), "temporary file").unwrap();
     }
@@ -306,7 +390,11 @@ interpolation:
 
         create_test_config(&source_dir);
         fs::create_dir_all(source_dir.join("deep/nested/path")).unwrap();
-        fs::write(source_dir.join("deep/nested/path/config.conf"), "nested=@user@").unwrap();
+        fs::write(
+            source_dir.join("deep/nested/path/config.conf"),
+            "nested=@user@",
+        )
+        .unwrap();
 
         let engine = StowawayEngine::new();
         let result = engine.execute(&source_dir, &target_dir, false);

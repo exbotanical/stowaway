@@ -1,11 +1,17 @@
-use crate::{context::StowawayContext, interpolation::{Interpolator, VariableInterpolator}, lifecycle::LifecyclePhase, store::{calculate_content_hash, FileSystemStoreManager, StoreManager, StoreVersion}};
-use crate::error::{Result};
+use crate::error::Result;
+use crate::{
+    context::StowawayContext,
+    interpolation::{Interpolator, VariableInterpolator},
+    lifecycle::LifecyclePhase,
+    store::{calculate_content_hash, FileSystemStoreManager, StoreManager, StoreVersion},
+};
+use tracing::info;
 
 pub struct InterpolatePhase;
 
 impl LifecyclePhase for InterpolatePhase {
     fn execute(&self, context: &mut StowawayContext) -> Result<()> {
-        println!("Interpolating variables");
+        info!("Interpolating variables");
 
         let interpolator = VariableInterpolator;
         let store_manager = FileSystemStoreManager::new()?;
@@ -54,9 +60,9 @@ impl LifecyclePhase for InterpolatePhase {
         };
 
         store_manager.set_current_version(&version)?;
-        context.store_hash = Some(content_hash);
+        context.store_hash = Some(content_hash.clone());
 
-        println!("Interpolated files to store");
+        info!(store_hash = %content_hash.clone(), "Interpolated files to store");
         Ok(())
     }
 }
@@ -65,7 +71,7 @@ impl LifecyclePhase for InterpolatePhase {
 mod tests {
     use super::*;
     use crate::config::StowawayConfig;
-    use crate::context::{ StowawayContext};
+    use crate::context::StowawayContext;
     use crate::file_entry::FileEntry;
     use std::collections::HashMap;
     use std::fs;
@@ -116,9 +122,10 @@ mod tests {
     #[test]
     fn test_interpolates_all_vars_in_file() {
         let temp_dir = TempDir::new().unwrap();
-        let mut context = create_test_context(&temp_dir, vec![
-            ("config.txt", "User: @username@\nEditor: @editor@", true),
-        ]);
+        let mut context = create_test_context(
+            &temp_dir,
+            vec![("config.txt", "User: @username@\nEditor: @editor@", true)],
+        );
 
         let phase = InterpolatePhase;
         phase.execute(&mut context).unwrap();
@@ -139,9 +146,14 @@ mod tests {
     #[test]
     fn test_handles_missing_var_mappings() {
         let temp_dir = TempDir::new().unwrap();
-        let mut context = create_test_context(&temp_dir, vec![
-            ("config.txt", "User: @username@\nMissing: @nonexistent@", true),
-        ]);
+        let mut context = create_test_context(
+            &temp_dir,
+            vec![(
+                "config.txt",
+                "User: @username@\nMissing: @nonexistent@",
+                true,
+            )],
+        );
 
         let phase = InterpolatePhase;
         phase.execute(&mut context).unwrap();
@@ -163,9 +175,8 @@ mod tests {
     fn test_copies_non_interpolated_files() {
         let temp_dir = TempDir::new().unwrap();
         let original_content = "This should not be interpolated: @username@";
-        let mut context = create_test_context(&temp_dir, vec![
-            ("binary.dat", original_content, false),
-        ]);
+        let mut context =
+            create_test_context(&temp_dir, vec![("binary.dat", original_content, false)]);
 
         let phase = InterpolatePhase;
         phase.execute(&mut context).unwrap();
@@ -184,11 +195,14 @@ mod tests {
     #[test]
     fn test_mixed_interpolated_and_non_interpolated_files() {
         let temp_dir = TempDir::new().unwrap();
-        let mut context = create_test_context(&temp_dir, vec![
-            ("config.txt", "User: @username@", true),
-            ("binary.dat", "Raw data: @username@", false),
-            ("template.conf", "Editor: @editor@\nUser: @username@", true),
-        ]);
+        let mut context = create_test_context(
+            &temp_dir,
+            vec![
+                ("config.txt", "User: @username@", true),
+                ("binary.dat", "Raw data: @username@", false),
+                ("template.conf", "Editor: @editor@\nUser: @username@", true),
+            ],
+        );
 
         let phase = InterpolatePhase;
         phase.execute(&mut context).unwrap();
@@ -211,10 +225,13 @@ mod tests {
     #[test]
     fn test_creates_nested_directory_structure() {
         let temp_dir = TempDir::new().unwrap();
-        let mut context = create_test_context(&temp_dir, vec![
-            ("deep/nested/config.txt", "User: @username@", true),
-            ("another/path/file.dat", "Raw: @editor@", false),
-        ]);
+        let mut context = create_test_context(
+            &temp_dir,
+            vec![
+                ("deep/nested/config.txt", "User: @username@", true),
+                ("another/path/file.dat", "Raw: @editor@", false),
+            ],
+        );
 
         let phase = InterpolatePhase;
         phase.execute(&mut context).unwrap();
@@ -236,17 +253,15 @@ mod tests {
     #[test]
     fn test_content_hash_consistency() {
         let temp_dir = TempDir::new().unwrap();
-        let mut context1 = create_test_context(&temp_dir, vec![
-            ("config.txt", "User: @username@", true),
-        ]);
+        let mut context1 =
+            create_test_context(&temp_dir, vec![("config.txt", "User: @username@", true)]);
 
         let phase = InterpolatePhase;
         phase.execute(&mut context1).unwrap();
         let hash1 = context1.store_hash.clone();
 
-        let mut context2 = create_test_context(&temp_dir, vec![
-            ("config.txt", "User: @username@", true),
-        ]);
+        let mut context2 =
+            create_test_context(&temp_dir, vec![("config.txt", "User: @username@", true)]);
         phase.execute(&mut context2).unwrap();
         let hash2 = context2.store_hash.clone();
 
@@ -256,17 +271,15 @@ mod tests {
     #[test]
     fn test_different_content_different_hash() {
         let temp_dir = TempDir::new().unwrap();
-        let mut context1 = create_test_context(&temp_dir, vec![
-            ("config.txt", "User: @username@", true),
-        ]);
+        let mut context1 =
+            create_test_context(&temp_dir, vec![("config.txt", "User: @username@", true)]);
 
         let phase = InterpolatePhase;
         phase.execute(&mut context1).unwrap();
         let hash1 = context1.store_hash.clone();
 
-        let mut context2 = create_test_context(&temp_dir, vec![
-            ("config.txt", "Editor: @editor@", true),
-        ]);
+        let mut context2 =
+            create_test_context(&temp_dir, vec![("config.txt", "Editor: @editor@", true)]);
         phase.execute(&mut context2).unwrap();
         let hash2 = context2.store_hash.clone();
 

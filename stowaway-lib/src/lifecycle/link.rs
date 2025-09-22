@@ -1,7 +1,11 @@
+use crate::error::Result;
 use crate::linking::Linker;
 use crate::store::StoreManager;
-use crate::{context::StowawayContext, lifecycle::LifecyclePhase, linking::FileSystemLinker, store::FileSystemStoreManager, StowawayError};
-use crate::error::{Result};
+use crate::{
+    context::StowawayContext, lifecycle::LifecyclePhase, linking::FileSystemLinker,
+    store::FileSystemStoreManager, StowawayError,
+};
+use tracing::{debug, info};
 
 pub struct LinkPhase;
 
@@ -11,17 +15,23 @@ impl LifecyclePhase for LinkPhase {
         let store_manager = FileSystemStoreManager::new()?;
 
         if context.dry_run {
-            println!("DRY RUN: Would create {} symlinks", context.files.len());
+            info!(
+                symlink_count = context.files.len(),
+                "DRY RUN: Would create symlinks"
+            );
             for file_entry in &context.files {
-                println!("  {} -> {}",
-                    file_entry.target_path.display(),
-                    file_entry.source_path.display()
+                debug!(
+                    target = %file_entry.target_path.display(),
+                    source = %file_entry.source_path.display(),
+                    "Would create symlink"
                 );
             }
             return Ok(());
         }
 
-        let store_hash = context.store_hash.as_ref()
+        let store_hash = context
+            .store_hash
+            .as_ref()
             .ok_or_else(|| StowawayError::Store("No store hash available".to_string()))?;
 
         let store_path = store_manager.get_store_path(store_hash);
@@ -40,7 +50,7 @@ impl LifecyclePhase for LinkPhase {
             linker.create_symlink(&store_file_path, &file_entry.target_path)?;
         }
 
-        println!("Created {} symlinks", context.files.len());
+        info!(symlink_count = context.files.len(), "Created symlinks");
         Ok(())
     }
 }
@@ -56,7 +66,11 @@ mod tests {
     use std::os::unix::fs::symlink;
     use tempfile::TempDir;
 
-    fn create_test_context(temp_dir: &TempDir, files: Vec<(&str, &str)>, dry_run: bool) -> StowawayContext {
+    fn create_test_context(
+        temp_dir: &TempDir,
+        files: Vec<(&str, &str)>,
+        dry_run: bool,
+    ) -> StowawayContext {
         let source_dir = temp_dir.path().join("source");
         let target_dir = temp_dir.path().join("target");
         fs::create_dir_all(&source_dir).unwrap();
@@ -109,13 +123,11 @@ mod tests {
     #[test]
     fn test_dry_run_vs_regular() {
         let temp_dir = TempDir::new().unwrap();
-        let _store_temp = setup_store_with_files("test_hash_123", vec![
-            ("config.txt", "test content"),
-        ]);
+        let _store_temp =
+            setup_store_with_files("test_hash_123", vec![("config.txt", "test content")]);
 
-        let mut dry_context = create_test_context(&temp_dir, vec![
-            ("config.txt", "test content"),
-        ], true);
+        let mut dry_context =
+            create_test_context(&temp_dir, vec![("config.txt", "test content")], true);
 
         let phase = LinkPhase;
         phase.execute(&mut dry_context).unwrap();
@@ -123,9 +135,8 @@ mod tests {
         let target_file = dry_context.target_dir.join("config.txt");
         assert!(!target_file.exists());
 
-        let mut regular_context = create_test_context(&temp_dir, vec![
-            ("config.txt", "test content"),
-        ], false);
+        let mut regular_context =
+            create_test_context(&temp_dir, vec![("config.txt", "test content")], false);
 
         phase.execute(&mut regular_context).unwrap();
 
@@ -137,15 +148,22 @@ mod tests {
     #[test]
     fn test_symlinks_files() {
         let temp_dir = TempDir::new().unwrap();
-        let _store_temp = setup_store_with_files("test_hash_456", vec![
-            ("config.txt", "config content"),
-            ("nested/file.conf", "nested content"),
-        ]);
+        let _store_temp = setup_store_with_files(
+            "test_hash_456",
+            vec![
+                ("config.txt", "config content"),
+                ("nested/file.conf", "nested content"),
+            ],
+        );
 
-        let mut context = create_test_context(&temp_dir, vec![
-            ("config.txt", "config content"),
-            ("nested/file.conf", "nested content"),
-        ], false);
+        let mut context = create_test_context(
+            &temp_dir,
+            vec![
+                ("config.txt", "config content"),
+                ("nested/file.conf", "nested content"),
+            ],
+            false,
+        );
         context.store_hash = Some("test_hash_456".to_string());
 
         let phase = LinkPhase;
@@ -172,9 +190,8 @@ mod tests {
     #[test]
     fn test_handles_missing_store_hash() {
         let temp_dir = TempDir::new().unwrap();
-        let mut context = create_test_context(&temp_dir, vec![
-            ("config.txt", "test content"),
-        ], false);
+        let mut context =
+            create_test_context(&temp_dir, vec![("config.txt", "test content")], false);
         context.store_hash = None;
 
         let phase = LinkPhase;
@@ -192,9 +209,8 @@ mod tests {
     #[test]
     fn test_handles_missing_store_files() {
         let temp_dir = TempDir::new().unwrap();
-        let mut context = create_test_context(&temp_dir, vec![
-            ("config.txt", "test content"),
-        ], false);
+        let mut context =
+            create_test_context(&temp_dir, vec![("config.txt", "test content")], false);
         context.store_hash = Some("nonexistent_hash".to_string());
 
         let phase = LinkPhase;
@@ -206,13 +222,11 @@ mod tests {
     #[test]
     fn test_handles_symlink_creation_failure() {
         let temp_dir = TempDir::new().unwrap();
-        let _store_temp = setup_store_with_files("test_hash_789", vec![
-            ("config.txt", "test content"),
-        ]);
+        let _store_temp =
+            setup_store_with_files("test_hash_789", vec![("config.txt", "test content")]);
 
-        let mut context = create_test_context(&temp_dir, vec![
-            ("config.txt", "test content"),
-        ], false);
+        let mut context =
+            create_test_context(&temp_dir, vec![("config.txt", "test content")], false);
         context.store_hash = Some("test_hash_789".to_string());
 
         let target_file = context.target_dir.join("config.txt");
@@ -230,13 +244,16 @@ mod tests {
     #[test]
     fn test_creates_target_directories() {
         let temp_dir = TempDir::new().unwrap();
-        let _store_temp = setup_store_with_files("test_hash_nested", vec![
-            ("deep/nested/config.txt", "nested content"),
-        ]);
+        let _store_temp = setup_store_with_files(
+            "test_hash_nested",
+            vec![("deep/nested/config.txt", "nested content")],
+        );
 
-        let mut context = create_test_context(&temp_dir, vec![
-            ("deep/nested/config.txt", "nested content"),
-        ], false);
+        let mut context = create_test_context(
+            &temp_dir,
+            vec![("deep/nested/config.txt", "nested content")],
+            false,
+        );
         context.store_hash = Some("test_hash_nested".to_string());
 
         let phase = LinkPhase;
@@ -253,15 +270,16 @@ mod tests {
     #[test]
     fn test_multiple_files_partial_failure() {
         let temp_dir = TempDir::new().unwrap();
-        let _store_temp = setup_store_with_files("test_hash_partial", vec![
-            ("good.txt", "good content"),
-            ("bad.txt", "bad content"),
-        ]);
+        let _store_temp = setup_store_with_files(
+            "test_hash_partial",
+            vec![("good.txt", "good content"), ("bad.txt", "bad content")],
+        );
 
-        let mut context = create_test_context(&temp_dir, vec![
-            ("good.txt", "good content"),
-            ("bad.txt", "bad content"),
-        ], false);
+        let mut context = create_test_context(
+            &temp_dir,
+            vec![("good.txt", "good content"), ("bad.txt", "bad content")],
+            false,
+        );
         context.store_hash = Some("test_hash_partial".to_string());
 
         let bad_target = context.target_dir.join("bad.txt");
@@ -289,9 +307,8 @@ mod tests {
     #[test]
     fn test_dry_run_with_missing_store_hash() {
         let temp_dir = TempDir::new().unwrap();
-        let mut context = create_test_context(&temp_dir, vec![
-            ("config.txt", "test content"),
-        ], true);
+        let mut context =
+            create_test_context(&temp_dir, vec![("config.txt", "test content")], true);
         context.store_hash = None;
 
         let phase = LinkPhase;
@@ -315,13 +332,10 @@ mod tests {
     fn test_symlink_points_to_correct_store_location() {
         let temp_dir = TempDir::new().unwrap();
         let test_content = "specific test content";
-        let _store_temp = setup_store_with_files("test_hash_verify", vec![
-            ("verify.txt", test_content),
-        ]);
+        let _store_temp =
+            setup_store_with_files("test_hash_verify", vec![("verify.txt", test_content)]);
 
-        let mut context = create_test_context(&temp_dir, vec![
-            ("verify.txt", test_content),
-        ], false);
+        let mut context = create_test_context(&temp_dir, vec![("verify.txt", test_content)], false);
         context.store_hash = Some("test_hash_verify".to_string());
 
         let phase = LinkPhase;
@@ -334,7 +348,9 @@ mod tests {
         assert_eq!(content, test_content);
 
         let store_manager = FileSystemStoreManager::new().unwrap();
-        let expected_target = store_manager.get_store_path("test_hash_verify").join("verify.txt");
+        let expected_target = store_manager
+            .get_store_path("test_hash_verify")
+            .join("verify.txt");
         let actual_target = fs::read_link(&target_link).unwrap();
         assert_eq!(actual_target, expected_target);
     }

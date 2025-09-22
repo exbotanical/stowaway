@@ -21,12 +21,9 @@ COPY --from=builder /app/target/release/stowaway /usr/local/bin/stowaway
 RUN chmod +x /usr/local/bin/stowaway
 
 COPY tests/ /tests/
-COPY scripts/ /tests/scripts/
-RUN chmod +x /tests/scripts/*.bash /tests/integration/utils/*.bash
+COPY scripts/ /scripts/
+RUN chmod +x /scripts/*.bash /scripts/*.sh
 
-COPY scripts/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
-
-WORKDIR /tests/scripts
+WORKDIR /
 
 ENTRYPOINT ["/entrypoint.sh"]

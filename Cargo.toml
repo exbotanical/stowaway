@@ -1,8 +1,5 @@
 [workspace]
-members = [
-    "stowaway-lib",
-    "stowaway-cli"
-]
+members = ["stowaway-lib", "stowaway-cli"]
 resolver = "2"
 
 [workspace.dependencies]
@@ -18,3 +15,6 @@ glob = "0.3"
 dirs = "5.0"
 tempfile = "3.8"
 mockall = "0.12"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-appender = "0.2"
