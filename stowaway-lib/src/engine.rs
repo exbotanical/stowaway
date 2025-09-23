@@ -1,13 +1,14 @@
 use crate::config::{ConfigLoader, YamlConfigLoader};
 use crate::context::StowawayContext;
 use crate::error::{Result, StowawayError};
+use crate::lifecycle::context::ContextPhase;
 use crate::lifecycle::interpolate::InterpolatePhase;
 use crate::lifecycle::link::LinkPhase;
 use crate::lifecycle::scan::ScanPhase;
 use crate::lifecycle::validate::ValidatePhase;
 use crate::lifecycle::LifecyclePhase;
 use crate::linking::{FileSystemLinker, Linker};
-use crate::store::{FileSystemStoreManager, StoreManager, StoreVersion};
+use crate::store::{FileSystemStoreManager, StoreManager};
 use std::path::Path;
 use std::time::Instant;
 use tracing::{debug, error, info, instrument, warn};
@@ -23,6 +24,7 @@ impl StowawayEngine {
         Self {
             config_loader: Box::new(YamlConfigLoader),
             phases: vec![
+                Box::new(ContextPhase),
                 Box::new(ScanPhase),
                 Box::new(ValidatePhase),
                 Box::new(InterpolatePhase),
@@ -57,6 +59,9 @@ impl StowawayEngine {
             dry_run,
             files: Vec::new(),
             store_hash: None,
+            operation_mode: crate::context::OperationMode::Create,
+            current_version: None,
+            target_hash: None,
         };
 
         for (phase_index, phase) in self.phases.iter().enumerate() {
@@ -73,7 +78,7 @@ impl StowawayEngine {
         }
 
         let duration = start_time.elapsed();
-        info!(
+        debug!(
             files_processed = context.files.len(),
             duration_ms = duration.as_millis(),
             "Operation completed successfully"
@@ -92,7 +97,6 @@ impl StowawayEngine {
         let linker = FileSystemLinker;
 
         let store_path = store_manager.get_store_path(hash);
-
         if !store_path.exists() {
             error!(version = hash, "Store version does not exist");
             return Err(StowawayError::Store(format!(
@@ -103,44 +107,45 @@ impl StowawayEngine {
 
         debug!(store_path = %store_path.display(), "Found store version");
 
-        // Get current version to know what to unlink
-        if let Some(current_version) = store_manager.get_current_version()? {
-            info!(
-                current_version = current_version.hash,
-                "Removing current symlinks"
-            );
-
-            let current_store_path = store_manager.get_store_path(&current_version.hash);
-            if current_store_path.exists() {
-                self.remove_symlinks_for_store(
-                    &current_store_path,
-                    &current_version.source_dir,
-                    &linker,
-                )?;
-                debug!("Removed current symlinks");
-            }
-        } else {
-            debug!("No current version found");
+        let current_version = store_manager.get_current_version()?;
+        if current_version.is_none() {
+            error!("No current version exists - cannot perform rollback");
+            return Err(StowawayError::Store(
+                "No current version exists - cannot perform rollback".to_string(),
+            ));
         }
 
-        // Create symlinks for the rollback version
-        let home_dir = dirs::home_dir().ok_or_else(|| {
-            error!("Could not determine home directory");
-            StowawayError::Store("Could not determine home directory".to_string())
+        let current_version = current_version.unwrap();
+        info!(
+            current_version = current_version.hash,
+            "Removing current symlinks"
+        );
+
+        let current_store_path = store_manager.get_store_path(&current_version.hash);
+        if current_store_path.exists() {
+            self.remove_symlinks_for_store(
+                &current_store_path,
+                &current_version.target_dir,
+                &linker,
+            )?;
+            debug!("Removed current symlinks");
+        }
+
+        let rollback_version = store_manager.read_metadata(hash).map_err(|e| {
+            error!(
+                version = hash,
+                error = %e,
+                "Could not read metadata for rollback version"
+            );
+            StowawayError::Store(format!(
+                "Could not read metadata for rollback version {}: {}",
+                hash, e
+            ))
         })?;
 
-        debug!(target_dir = %home_dir.display(), "Creating symlinks for rollback version");
-        self.create_symlinks_for_store(&store_path, &home_dir, &linker)?;
-
-        // Update current version
-        let rollback_version = StoreVersion {
-            hash: hash.to_string(),
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
-            source_dir: home_dir,
-        };
+        debug!(target_dir = %rollback_version.target_dir.display(), "Creating symlinks for rollback version");
+        // TODO: Replace with a call to LinkPhase
+        self.create_symlinks_for_store(&store_path, &rollback_version.target_dir, &linker)?;
 
         store_manager.set_current_version(&rollback_version)?;
 
@@ -149,6 +154,130 @@ impl StowawayEngine {
             version = hash,
             duration_ms = duration.as_millis(),
             "Rollback operation completed successfully"
+        );
+
+        Ok(())
+    }
+
+    #[instrument(skip(self), fields(dry_run))]
+    pub fn unstow(&self, dry_run: bool) -> Result<()> {
+        let start_time = Instant::now();
+
+        info!(dry_run, "Starting unstow operation");
+
+        let store_manager = FileSystemStoreManager::new()?;
+        let linker = FileSystemLinker;
+
+        let current_version = store_manager.get_current_version()?;
+        if current_version.is_none() {
+            error!("No current version exists - nothing to unstow");
+            return Err(StowawayError::Store(
+                "No current version exists - nothing to unstow".to_string(),
+            ));
+        }
+
+        let current_version = current_version.unwrap();
+        info!(
+            current_version = current_version.hash,
+            target_dir = %current_version.target_dir.display(),
+            "Found current version to unstow"
+        );
+
+        let current_store_path = store_manager.get_store_path(&current_version.hash);
+        if !current_store_path.exists() {
+            error!(
+                version = current_version.hash,
+                "Store version does not exist"
+            );
+            return Err(StowawayError::Store(format!(
+                "Store version {} does not exist",
+                current_version.hash
+            )));
+        }
+
+        if dry_run {
+            info!("DRY RUN: Would remove symlinks for current version");
+            let mut symlink_count = 0;
+            for entry in WalkDir::new(&current_store_path) {
+                let entry = entry?;
+                if entry.file_type().is_file() {
+                    let relative_path = entry
+                        .path()
+                        .strip_prefix(&current_store_path)
+                        .map_err(|_| StowawayError::Store("Invalid store path".to_string()))?;
+                    let target_path = current_version.target_dir.join(relative_path);
+
+                    if target_path.is_symlink() {
+                        debug!(target = %target_path.display(), "Would remove symlink");
+                        symlink_count += 1;
+                    }
+                }
+            }
+            info!(symlink_count, "DRY RUN: Would remove symlinks");
+        } else {
+            self.remove_symlinks_for_store(
+                &current_store_path,
+                &current_version.target_dir,
+                &linker,
+            )?;
+
+            let session_file = store_manager.session_file_path();
+            if session_file.exists() {
+                std::fs::remove_file(&session_file)?;
+                debug!("Cleared current version session");
+            }
+
+            info!("Removed all symlinks and cleared current version");
+        }
+
+        let duration = start_time.elapsed();
+        info!(
+            duration_ms = duration.as_millis(),
+            "Unstow operation completed successfully"
+        );
+
+        Ok(())
+    }
+
+    #[instrument(skip(self))]
+    pub fn list_generations(&self) -> Result<()> {
+        let start_time = Instant::now();
+
+        debug!("Starting list generations operation");
+
+        let store_manager = FileSystemStoreManager::new()?;
+
+        let current_version = store_manager.get_current_version()?;
+
+        let all_versions = store_manager.list_all_versions()?;
+
+        if all_versions.is_empty() {
+            debug!("No store versions found.");
+            return Ok(());
+        }
+
+        for version in &all_versions {
+            let is_current = current_version
+                .as_ref()
+                .map(|cv| cv.hash == version.hash)
+                .unwrap_or(false);
+
+            let timestamp = chrono::DateTime::from_timestamp(version.timestamp as i64, 0)
+                .unwrap_or_default()
+                .format("%Y-%m-%d %H:%M:%S");
+
+            if is_current {
+                println!("Current -> {} {}", version.hash, timestamp);
+            } else {
+                println!("           {} {}", version.hash, timestamp);
+            }
+        }
+
+        let duration = start_time.elapsed();
+        info!(
+            versions_count = all_versions.len(),
+            duration_ms = duration.as_millis(),
+            "List generations operation completed successfully"
         );
 
         Ok(())
@@ -208,6 +337,7 @@ impl Default for StowawayEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use std::fs;
     use tempfile::TempDir;
 
@@ -244,6 +374,7 @@ interpolation:
     }
 
     #[test]
+    #[serial]
     fn test_execute_runs_all_phases_successfully() {
         let temp_dir = TempDir::new().unwrap();
         let source_dir = temp_dir.path().join("source");
@@ -257,6 +388,9 @@ interpolation:
         let engine = StowawayEngine::new();
         let result = engine.execute(&source_dir, &target_dir, false);
 
+        if let Err(e) = &result {
+            eprintln!("Engine execution failed: {}", e);
+        }
         assert!(result.is_ok());
 
         let target_config_file = target_dir.join("config/app.conf");
@@ -273,6 +407,7 @@ interpolation:
     }
 
     #[test]
+    #[serial]
     fn test_execute_dry_run_creates_no_symlinks() {
         let temp_dir = TempDir::new().unwrap();
         let source_dir = temp_dir.path().join("source");
@@ -296,6 +431,7 @@ interpolation:
     }
 
     #[test]
+    #[serial]
     fn test_execute_fails_on_conflicts() {
         let temp_dir = TempDir::new().unwrap();
         let source_dir = temp_dir.path().join("source");
@@ -318,6 +454,7 @@ interpolation:
     }
 
     #[test]
+    #[serial]
     fn test_execute_succeeds_with_default_config() {
         let temp_dir = TempDir::new().unwrap();
         let source_dir = temp_dir.path().join("source");
@@ -356,6 +493,7 @@ interpolation:
     }
 
     #[test]
+    #[serial]
     fn test_execute_interpolates_variables() {
         let temp_dir = TempDir::new().unwrap();
         let source_dir = temp_dir.path().join("source");
@@ -381,6 +519,7 @@ interpolation:
     }
 
     #[test]
+    #[serial]
     fn test_execute_handles_nested_directories() {
         let temp_dir = TempDir::new().unwrap();
         let source_dir = temp_dir.path().join("source");
@@ -406,6 +545,7 @@ interpolation:
     }
 
     #[test]
+    #[serial]
     fn test_execute_preserves_directory_structure() {
         let temp_dir = TempDir::new().unwrap();
         let source_dir = temp_dir.path().join("source");
@@ -431,6 +571,7 @@ interpolation:
     }
 
     #[test]
+    #[serial]
     fn test_execute_respects_include_exclude_patterns() {
         let temp_dir = TempDir::new().unwrap();
         let source_dir = temp_dir.path().join("source");

@@ -9,6 +9,7 @@ ROOT_DIR="$(dirname "$(readlink -f $BASH_SOURCE)")"
 describe 'stowaway basic operations'
   alias setup='setup_test_env "basic"'
   alias teardown='cleanup_test_env'
+
   it 'creates symlinks for dotfiles'
     run_stowaway stow --source "$SOURCE_DIR" --target "$TARGET_DIR"
 
@@ -40,14 +41,19 @@ describe 'stowaway basic operations'
   ti
 
   it 'handles dry run mode'
-    alias setup='setup_test_env "dryrun"'
-    alias teardown='cleanup_test_env'
     run_stowaway stow --source "$SOURCE_DIR" --target "$TARGET_DIR" --dry-run
 
     # No symlinks should be created in dry-run mode
     assert_file_not_exists "$TARGET_DIR/.bashrc"
     assert_file_not_exists "$TARGET_DIR/.gitconfig"
     assert_file_not_exists "$TARGET_DIR/.vimrc"
+  ti
+
+  it 'can run twice on non-mutated files just fine'
+    run_stowaway stow --source "$SOURCE_DIR" --target "$TARGET_DIR"
+    run_stowaway stow --source "$SOURCE_DIR" --target "$TARGET_DIR"
+
+    assert equal $? 0
   ti
 
   it 'detects conflicts'
@@ -72,16 +78,13 @@ describe 'stowaway basic operations'
   ti
 
   it 'creates new version when content changes and supports rollback'
-    # Initial stow operation
     run_stowaway stow --source "$SOURCE_DIR" --target "$TARGET_DIR"
 
     # Verify initial symlinks exist
     assert_symlink_exists "$TARGET_DIR/.bashrc"
     assert_symlink_exists "$TARGET_DIR/.gitconfig"
 
-    # Capture first version hash
     first_hash=$(get_current_store_hash)
-    assert test -n "$first_hash"
 
     # Verify symlinks point to first version
     assert_symlink_points_to_store "$TARGET_DIR/.bashrc" "$first_hash"
@@ -92,18 +95,14 @@ describe 'stowaway basic operations'
     # Stow again - should create new version due to content change
     run_stowaway stow --source "$SOURCE_DIR" --target "$TARGET_DIR"
 
-    # Capture second version hash
     second_hash=$(get_current_store_hash)
-    assert test -n "$second_hash"
 
-    # Verify hashes are different (new version created)
     assert unequal "$first_hash" "$second_hash"
 
     # Verify current symlinks point to new version
     assert_symlink_points_to_store "$TARGET_DIR/.bashrc" "$second_hash"
     assert_symlink_points_to_store "$TARGET_DIR/.gitconfig" "$second_hash"
 
-    # Rollback to first version
     run_stowaway rollback "$first_hash"
     assert equal $? 0
 

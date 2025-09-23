@@ -9,7 +9,6 @@ use tracing::{error, Level};
 fn main() {
     let command = cli::parse_args();
 
-    // Initialize logging based on CLI arguments
     let log_config = match &command {
         cli::CliCommand::Stow {
             log_level,
@@ -18,7 +17,21 @@ fn main() {
             quiet,
             ..
         }
+        | cli::CliCommand::Unstow {
+            log_level,
+            log_format,
+            verbose,
+            quiet,
+            ..
+        }
         | cli::CliCommand::Rollback {
+            log_level,
+            log_format,
+            verbose,
+            quiet,
+            ..
+        }
+        | cli::CliCommand::Generations {
             log_level,
             log_format,
             verbose,
@@ -42,7 +55,9 @@ fn main() {
             force: _,
             ..
         } => stowaway.run(&source, &target, dry_run),
+        cli::CliCommand::Unstow { dry_run, .. } => stowaway.unstow(dry_run),
         cli::CliCommand::Rollback { hash, .. } => stowaway.rollback(&hash),
+        cli::CliCommand::Generations { .. } => stowaway.list_generations(),
     };
 
     if let Err(e) = result {

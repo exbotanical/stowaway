@@ -60,6 +60,7 @@ mod tests {
     use std::fs;
     use std::os::unix::fs as unix_fs;
     use tempfile::TempDir;
+    use serial_test::serial;
 
     fn create_test_context(temp_dir: &TempDir) -> StowawayContext {
         let source_dir = temp_dir.path().join("source");
@@ -82,10 +83,14 @@ mod tests {
             dry_run: false,
             files: Vec::new(),
             store_hash: None,
+            operation_mode: crate::context::OperationMode::Create,
+            current_version: None,
+            target_hash: None,
         }
     }
 
     #[test]
+    #[serial]
     fn test_passes_with_no_conflicts() {
         let temp_dir = TempDir::new().unwrap();
         let mut context = create_test_context(&temp_dir);
@@ -105,6 +110,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_detects_file_conflicts() {
         let temp_dir = TempDir::new().unwrap();
         let mut context = create_test_context(&temp_dir);
@@ -130,6 +136,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_detects_directory_conflicts() {
         let temp_dir = TempDir::new().unwrap();
         let mut context = create_test_context(&temp_dir);
@@ -155,6 +162,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_allows_managed_symlinks() {
         let temp_dir = TempDir::new().unwrap();
         let mut context = create_test_context(&temp_dir);
@@ -182,6 +190,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_detects_unmanaged_symlinks() {
         let temp_dir = TempDir::new().unwrap();
         let mut context = create_test_context(&temp_dir);
@@ -210,6 +219,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_handles_multiple_conflicts() {
         let temp_dir = TempDir::new().unwrap();
         let mut context = create_test_context(&temp_dir);
@@ -258,6 +268,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_mixed_valid_and_invalid_files() {
         let temp_dir = TempDir::new().unwrap();
         let mut context = create_test_context(&temp_dir);
@@ -305,6 +316,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_empty_file_list() {
         let temp_dir = TempDir::new().unwrap();
         let mut context = create_test_context(&temp_dir);
@@ -316,6 +328,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_nested_directory_structure() {
         let temp_dir = TempDir::new().unwrap();
         let mut context = create_test_context(&temp_dir);
@@ -338,6 +351,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_broken_symlink_detection() {
         let temp_dir = TempDir::new().unwrap();
         let mut context = create_test_context(&temp_dir);

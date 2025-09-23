@@ -21,6 +21,22 @@ blue() {
   printf "${BLUE}$*${DEFAULT}"
 }
 
+log_info() {
+  blue "[INFO] $1"
+}
+
+log_success() {
+  green "[SUCCESS] $1"
+}
+
+log_error() {
+  red "[ERROR] $1"
+}
+
+log_warning() {
+  yellow "[WARN] $1"
+}
+
 for_each() {
   local fn=$1
   shift
@@ -79,79 +95,17 @@ setup_test_env() {
 }
 
 cleanup_test_env() {
-  if [[ -n "$TEST_DIR" && -d "$TEST_DIR" ]]; then
-    rm -rf "$TEST_DIR"
-  fi
+  run_stowaway unstow || true
+
+  log_info "Cleaning up test environment..."
+  rm -rf /tmp/stowaway-test-* 2> /dev/null || true
+  rm -rf "$HOME"/.stowaway 2> /dev/null || true
+
+  # Remove any existing symlinks from previous tests
+  find "$HOME" -maxdepth 3 -type l -delete 2> /dev/null || true
 }
 
 # Stowaway test helpers
 run_stowaway() {
   stowaway "$@" --log-level debug
-}
-
-assert_symlink_exists() {
-  local file="$1"
-  [[ -L "$file" ]]
-  assert equal $? 0
-}
-
-assert_is_dir() {
-  local file="$1"
-  test -d "$file"
-  assert equal $? 0
-}
-
-assert_file_not_exists() {
-  local file="$1"
-  assert file_absent "$file"
-}
-
-assert_file_contains() {
-  local file="$1"
-  local pattern="$2"
-  [[ -f "$file" ]] && grep -q "$pattern" "$file"
-}
-
-assert_symlink_target_contains() {
-  local symlink="$1"
-  local pattern="$2"
-
-  [[ -L "$symlink" ]] && {
-    local target
-    target=$(readlink "$symlink")
-    [[ -f "$target" ]] && grep -q "$pattern" "$target"
-    assert equal $? 0
-    return 0
-  }
-
-  assert equal 0 -1
-}
-
-# Version management helper functions
-get_current_store_hash() {
-  local session_file="$HOME/.stowaway/session.json"
-  if [[ -f "$session_file" ]]; then
-    # Extract hash from JSON using basic text processing
-    grep '"hash"' "$session_file" | sed 's/.*"hash": *"\([^"]*\)".*/\1/'
-  else
-    echo ""
-  fi
-}
-
-assert_symlink_points_to_store() {
-  local symlink="$1"
-  local expected_hash="$2"
-
-  [[ -L "$symlink" ]] || {
-    assert equal 0 -1
-    return 1
-  }
-
-  local target
-  target=$(readlink "$symlink")
-  local expected_store_path="$HOME/.stowaway/store/$expected_hash"
-
-  # Check if the symlink target starts with the expected store path
-  [[ "$target" == "$expected_store_path"* ]]
-  assert equal $? 0
 }

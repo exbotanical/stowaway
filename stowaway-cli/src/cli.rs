@@ -13,8 +13,21 @@ pub enum CliCommand {
         verbose: bool,
         quiet: bool,
     },
+    Unstow {
+        dry_run: bool,
+        log_level: Option<String>,
+        log_format: Option<String>,
+        verbose: bool,
+        quiet: bool,
+    },
     Rollback {
         hash: String,
+        log_level: Option<String>,
+        log_format: Option<String>,
+        verbose: bool,
+        quiet: bool,
+    },
+    Generations {
         log_level: Option<String>,
         log_format: Option<String>,
         verbose: bool,
@@ -86,6 +99,18 @@ pub fn build_cli() -> Command {
                 .args(logging_args.clone()),
         )
         .subcommand(
+            Command::new("unstow")
+                .about("Remove all symlinks from the current stow version")
+                .arg(
+                    Arg::new("dry-run")
+                        .short('n')
+                        .long("dry-run")
+                        .help("Show what would be removed without making changes")
+                        .action(ArgAction::SetTrue),
+                )
+                .args(logging_args.clone()),
+        )
+        .subcommand(
             Command::new("rollback")
                 .about("Rollback to a previous store version")
                 .arg(
@@ -94,6 +119,11 @@ pub fn build_cli() -> Command {
                         .help("Store version hash to rollback to")
                         .required(true),
                 )
+                .args(logging_args.clone()),
+        )
+        .subcommand(
+            Command::new("generations")
+                .about("List all store versions with timestamps")
                 .args(logging_args),
         )
 }
@@ -112,8 +142,21 @@ pub fn parse_args() -> CliCommand {
             verbose: sub_matches.get_flag("verbose"),
             quiet: sub_matches.get_flag("quiet"),
         },
+        Some(("unstow", sub_matches)) => CliCommand::Unstow {
+            dry_run: sub_matches.get_flag("dry-run"),
+            log_level: sub_matches.get_one::<String>("log-level").cloned(),
+            log_format: sub_matches.get_one::<String>("log-format").cloned(),
+            verbose: sub_matches.get_flag("verbose"),
+            quiet: sub_matches.get_flag("quiet"),
+        },
         Some(("rollback", sub_matches)) => CliCommand::Rollback {
             hash: sub_matches.get_one::<String>("hash").unwrap().clone(),
+            log_level: sub_matches.get_one::<String>("log-level").cloned(),
+            log_format: sub_matches.get_one::<String>("log-format").cloned(),
+            verbose: sub_matches.get_flag("verbose"),
+            quiet: sub_matches.get_flag("quiet"),
+        },
+        Some(("generations", sub_matches)) => CliCommand::Generations {
             log_level: sub_matches.get_one::<String>("log-level").cloned(),
             log_format: sub_matches.get_one::<String>("log-format").cloned(),
             verbose: sub_matches.get_flag("verbose"),

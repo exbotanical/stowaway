@@ -70,10 +70,11 @@ impl LifecyclePhase for ScanPhase {
 mod tests {
     use super::*;
     use crate::config::{InterpolationConfig, StowawayConfig};
-    use crate::context::StowawayContext;
+    use crate::context::{StowawayContext};
     use std::collections::HashMap;
     use std::fs;
     use tempfile::TempDir;
+    use serial_test::serial;
 
     fn create_test_context(
         temp_dir: &TempDir,
@@ -100,6 +101,9 @@ mod tests {
             dry_run: false,
             files: Vec::new(),
             store_hash: None,
+            operation_mode: crate::context::OperationMode::Create,
+            current_version: None,
+            target_hash: None,
         }
     }
 
@@ -114,6 +118,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_collects_include_files() {
         let temp_dir = TempDir::new().unwrap();
         let mut context = create_test_context(&temp_dir, vec!["*.txt".to_string()], vec![]);
@@ -155,6 +160,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_ignores_exclude_files() {
         let temp_dir = TempDir::new().unwrap();
         let mut context = create_test_context(
@@ -193,6 +199,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_recurses_directories() {
         let temp_dir = TempDir::new().unwrap();
         let mut context = create_test_context(&temp_dir, vec!["**/*".to_string()], vec![]);
@@ -235,6 +242,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_multiple_include_patterns() {
         let temp_dir = TempDir::new().unwrap();
         let mut context = create_test_context(
@@ -288,6 +296,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_complex_glob_patterns() {
         let temp_dir = TempDir::new().unwrap();
         let mut context = create_test_context(
@@ -338,6 +347,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_empty_directory() {
         let temp_dir = TempDir::new().unwrap();
         let mut context = create_test_context(&temp_dir, vec!["**/*".to_string()], vec![]);
@@ -349,6 +359,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_directories_ignored() {
         let temp_dir = TempDir::new().unwrap();
         let mut context = create_test_context(&temp_dir, vec!["**/*".to_string()], vec![]);
@@ -365,6 +376,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_invalid_glob_pattern() {
         let temp_dir = TempDir::new().unwrap();
         let mut context = create_test_context(&temp_dir, vec!["[invalid".to_string()], vec![]);
@@ -378,6 +390,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_exclude_takes_precedence() {
         let temp_dir = TempDir::new().unwrap();
         let mut context = create_test_context(

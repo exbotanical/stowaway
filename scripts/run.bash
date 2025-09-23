@@ -10,31 +10,6 @@ declare -a SKIP_FILES=(
   # Add any files to skip here
 )
 
-log_info() {
-  blue "[INFO] $1"
-}
-
-log_success() {
-  green "[SUCCESS] $1"
-}
-
-log_error() {
-  red "[ERROR] $1"
-}
-
-log_warning() {
-  yellow "[WARN] $1"
-}
-
-cleanup_test_env() {
-  log_info "Cleaning up test environment..."
-  rm -rf /tmp/stowaway-test-* 2> /dev/null || true
-  rm -rf "$HOME"/.stowaway-store 2> /dev/null || true
-
-  # Remove any existing symlinks from previous tests
-  find "$HOME" -maxdepth 3 -type l -delete 2> /dev/null || true
-}
-
 run_test() {
   local file_name="$1"
   echo "Running test: $file_name"

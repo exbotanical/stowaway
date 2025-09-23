@@ -1,3 +1,5 @@
+use tracing::debug;
+
 use crate::error::{Result, StowawayError};
 use std::path::Path;
 
@@ -141,7 +143,9 @@ mod tests {
         assert!(linker.is_symlink_valid(&target_file, &source_file).unwrap());
 
         let wrong_source = temp_dir.path().join("wrong.txt");
-        assert!(!linker.is_symlink_valid(&target_file, &wrong_source).unwrap());
+        assert!(!linker
+            .is_symlink_valid(&target_file, &wrong_source)
+            .unwrap());
     }
 
     #[test]

@@ -5,12 +5,15 @@ use crate::{
     context::StowawayContext, lifecycle::LifecyclePhase, linking::FileSystemLinker,
     store::FileSystemStoreManager, StowawayError,
 };
-use tracing::{debug, info};
+use tracing::info;
 
+/// The link phase is among the last phases and is where we actually symlink the store files to their targets.
 pub struct LinkPhase;
 
 impl LifecyclePhase for LinkPhase {
     fn execute(&self, context: &mut StowawayContext) -> Result<()> {
+        use crate::context::OperationMode;
+
         let linker = FileSystemLinker;
         let store_manager = FileSystemStoreManager::new()?;
 
@@ -20,7 +23,7 @@ impl LifecyclePhase for LinkPhase {
                 "DRY RUN: Would create symlinks"
             );
             for file_entry in &context.files {
-                debug!(
+                info!(
                     target = %file_entry.target_path.display(),
                     source = %file_entry.source_path.display(),
                     "Would create symlink"
@@ -28,6 +31,65 @@ impl LifecyclePhase for LinkPhase {
             }
             return Ok(());
         }
+
+        match &context.operation_mode {
+            OperationMode::Verify => self.verify_symlinks(context, &linker, &store_manager),
+            OperationMode::Create => self.create_symlinks(context, &linker, &store_manager),
+            OperationMode::Replace => self.replace_symlinks(context, &linker, &store_manager),
+            OperationMode::Switch(target_version) => {
+                self.switch_symlinks(context, &linker, &store_manager, target_version)
+            }
+        }
+    }
+}
+
+impl LinkPhase {
+    fn verify_symlinks(
+        &self,
+        context: &StowawayContext,
+        _linker: &FileSystemLinker,
+        store_manager: &FileSystemStoreManager,
+    ) -> Result<()> {
+        info!("Verifying existing symlinks");
+
+        let store_hash = context
+            .store_hash
+            .as_ref()
+            .ok_or_else(|| StowawayError::Store("No store hash available".to_string()))?;
+
+        let store_path = store_manager.get_store_path(store_hash);
+
+        for file_entry in &context.files {
+            if !file_entry.target_path.is_symlink() {
+                return Err(StowawayError::Linking(format!(
+                    "Expected symlink not found: {}",
+                    file_entry.target_path.display()
+                )));
+            }
+
+            let store_file_path = store_path.join(&file_entry.relative_path);
+            let current_target = std::fs::read_link(&file_entry.target_path)?;
+            if current_target != store_file_path {
+                return Err(StowawayError::Linking(format!(
+                    "Symlink points to wrong location: {} -> {} (expected: {})",
+                    file_entry.target_path.display(),
+                    current_target.display(),
+                    store_file_path.display()
+                )));
+            }
+        }
+
+        info!(symlink_count = context.files.len(), "Verified symlinks");
+        Ok(())
+    }
+
+    fn create_symlinks(
+        &self,
+        context: &StowawayContext,
+        linker: &FileSystemLinker,
+        store_manager: &FileSystemStoreManager,
+    ) -> Result<()> {
+        info!("Creating new symlinks");
 
         let store_hash = context
             .store_hash
@@ -39,7 +101,6 @@ impl LifecyclePhase for LinkPhase {
         for file_entry in &context.files {
             let store_file_path = store_path.join(&file_entry.relative_path);
 
-            // Verify the store file exists before creating symlink
             if !store_file_path.exists() {
                 return Err(StowawayError::Store(format!(
                     "Store file does not exist: {}",
@@ -50,7 +111,72 @@ impl LifecyclePhase for LinkPhase {
             linker.create_symlink(&store_file_path, &file_entry.target_path)?;
         }
 
+        store_manager.set_current_version(&crate::store::StoreVersion {
+            hash: store_hash.clone(),
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            source_dir: context.source_dir.clone(),
+            target_dir: context.target_dir.clone(),
+        })?;
+
         info!(symlink_count = context.files.len(), "Created symlinks");
+        Ok(())
+    }
+
+    fn replace_symlinks(
+        &self,
+        context: &StowawayContext,
+        linker: &FileSystemLinker,
+        store_manager: &FileSystemStoreManager,
+    ) -> Result<()> {
+        info!("Replacing existing symlinks");
+        for file_entry in &context.files {
+            if file_entry.target_path.exists() {
+                std::fs::remove_file(&file_entry.target_path)?;
+            }
+        }
+
+        self.create_symlinks(context, linker, store_manager)
+    }
+
+    fn switch_symlinks(
+        &self,
+        context: &StowawayContext,
+        linker: &FileSystemLinker,
+        store_manager: &FileSystemStoreManager,
+        target_version: &crate::store::StoreVersion,
+    ) -> Result<()> {
+        info!(target_hash = %target_version.hash, "Switching to existing store version");
+
+        let store_path = store_manager.get_store_path(&target_version.hash);
+
+        for file_entry in &context.files {
+            if file_entry.target_path.exists() {
+                std::fs::remove_file(&file_entry.target_path)?;
+            }
+        }
+
+        for file_entry in &context.files {
+            let store_file_path = store_path.join(&file_entry.relative_path);
+
+            if !store_file_path.exists() {
+                return Err(StowawayError::Store(format!(
+                    "Store file does not exist: {}",
+                    store_file_path.display()
+                )));
+            }
+
+            linker.create_symlink(&store_file_path, &file_entry.target_path)?;
+        }
+
+        store_manager.set_current_version(target_version)?;
+
+        info!(
+            symlink_count = context.files.len(),
+            "Switched symlinks to target version"
+        );
         Ok(())
     }
 }
@@ -62,8 +188,8 @@ mod tests {
     use crate::context::StowawayContext;
     use crate::file_entry::FileEntry;
     use crate::store::{FileSystemStoreManager, StoreManager, StoreVersion};
+    use serial_test::serial;
     use std::fs;
-    use std::os::unix::fs::symlink;
     use tempfile::TempDir;
 
     fn create_test_context(
@@ -102,12 +228,26 @@ mod tests {
             dry_run,
             files: file_entries,
             store_hash: Some("test_hash_123".to_string()),
+            operation_mode: crate::context::OperationMode::Create,
+            current_version: None,
+            target_hash: None,
         }
     }
 
-    fn setup_store_with_files(store_hash: &str, files: Vec<(&str, &str)>) -> TempDir {
+    fn setup_store_with_files(store_hash: &str, files: Vec<(&str, &str)>) -> () {
         let store_manager = FileSystemStoreManager::new().unwrap();
-        let store_path = store_manager.create_version(store_hash).unwrap();
+
+        let version = StoreVersion {
+            hash: store_hash.to_string(),
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            source_dir: std::path::PathBuf::from("/test/source"),
+            target_dir: std::path::PathBuf::from("/test/target"),
+        };
+
+        let store_path = store_manager.create_version(&version).unwrap();
 
         for (relative_path, content) in files {
             let store_file_path = store_path.join(relative_path);
@@ -116,15 +256,13 @@ mod tests {
             }
             fs::write(&store_file_path, content).unwrap();
         }
-
-        TempDir::new().unwrap()
     }
 
     #[test]
+    #[serial]
     fn test_dry_run_vs_regular() {
         let temp_dir = TempDir::new().unwrap();
-        let _store_temp =
-            setup_store_with_files("test_hash_123", vec![("config.txt", "test content")]);
+        setup_store_with_files("test_hash_123", vec![("config.txt", "test content")]);
 
         let mut dry_context =
             create_test_context(&temp_dir, vec![("config.txt", "test content")], true);
@@ -146,9 +284,10 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_symlinks_files() {
         let temp_dir = TempDir::new().unwrap();
-        let _store_temp = setup_store_with_files(
+        setup_store_with_files(
             "test_hash_456",
             vec![
                 ("config.txt", "config content"),
@@ -188,6 +327,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_handles_missing_store_hash() {
         let temp_dir = TempDir::new().unwrap();
         let mut context =
@@ -207,6 +347,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_handles_missing_store_files() {
         let temp_dir = TempDir::new().unwrap();
         let mut context =
@@ -220,10 +361,10 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_handles_symlink_creation_failure() {
         let temp_dir = TempDir::new().unwrap();
-        let _store_temp =
-            setup_store_with_files("test_hash_789", vec![("config.txt", "test content")]);
+        setup_store_with_files("test_hash_789", vec![("config.txt", "test content")]);
 
         let mut context =
             create_test_context(&temp_dir, vec![("config.txt", "test content")], false);
@@ -242,9 +383,10 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_creates_target_directories() {
         let temp_dir = TempDir::new().unwrap();
-        let _store_temp = setup_store_with_files(
+        setup_store_with_files(
             "test_hash_nested",
             vec![("deep/nested/config.txt", "nested content")],
         );
@@ -268,6 +410,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_multiple_files_partial_failure() {
         let temp_dir = TempDir::new().unwrap();
         let _store_temp = setup_store_with_files(
@@ -305,6 +448,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_dry_run_with_missing_store_hash() {
         let temp_dir = TempDir::new().unwrap();
         let mut context =
@@ -318,6 +462,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_empty_files_list() {
         let temp_dir = TempDir::new().unwrap();
         let mut context = create_test_context(&temp_dir, vec![], false);
@@ -329,6 +474,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_symlink_points_to_correct_store_location() {
         let temp_dir = TempDir::new().unwrap();
         let test_content = "specific test content";

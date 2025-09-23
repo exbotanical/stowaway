@@ -1,6 +1,7 @@
 use crate::context::StowawayContext;
 use crate::error::{Result};
 
+pub mod context;
 pub mod interpolate;
 pub mod link;
 pub mod scan;

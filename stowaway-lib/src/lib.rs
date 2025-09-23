@@ -8,6 +8,7 @@ pub mod lifecycle;
 pub mod linking;
 pub mod logging;
 pub mod store;
+pub mod utils;
 pub mod validation;
 
 pub use error::{Result, StowawayError};
@@ -32,6 +33,14 @@ impl Stowaway {
 
     pub fn rollback(&self, hash: &str) -> Result<()> {
         self.engine.rollback(hash)
+    }
+
+    pub fn list_generations(&self) -> Result<()> {
+        self.engine.list_generations()
+    }
+
+    pub fn unstow(&self, dry_run: bool) -> Result<()> {
+        self.engine.unstow(dry_run)
     }
 }
 

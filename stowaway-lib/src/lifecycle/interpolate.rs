@@ -3,66 +3,78 @@ use crate::{
     context::StowawayContext,
     interpolation::{Interpolator, VariableInterpolator},
     lifecycle::LifecyclePhase,
-    store::{calculate_content_hash, FileSystemStoreManager, StoreManager, StoreVersion},
+    store::{FileSystemStoreManager, StoreManager},
+    StowawayError,
 };
 use tracing::info;
 
+/// The interpolate phase is where we take the user's stowaway variables and shared state and apply it to their source files.
+/// The result of the interpolate phase is the store fileset, which we then symlink to their home-relative (or in some scenarios, root) counterparts.
+/// This phase is also responsible for creating the new store version, which we defer to as late in the process as possible.
 pub struct InterpolatePhase;
 
 impl LifecyclePhase for InterpolatePhase {
     fn execute(&self, context: &mut StowawayContext) -> Result<()> {
+        use crate::context::OperationMode;
+
         info!("Interpolating variables");
 
-        let interpolator = VariableInterpolator;
         let store_manager = FileSystemStoreManager::new()?;
+        let interpolator = VariableInterpolator;
 
-        // Calculate content hash for this interpolation
-        let mut all_content = String::new();
-        for file_entry in &context.files {
-            if file_entry.should_interpolate {
-                let content = std::fs::read_to_string(&file_entry.source_path)?;
-                let interpolated = interpolator.interpolate(&content, &context.config.variables)?;
-                all_content.push_str(&interpolated);
-            } else {
-                let content = std::fs::read_to_string(&file_entry.source_path)?;
-                all_content.push_str(&content);
+        match &context.operation_mode {
+            OperationMode::Verify => {
+                info!("Verify mode: skipping interpolation");
+                return Ok(());
+            }
+            OperationMode::Switch(_) => {
+                info!("Switch mode: skipping interpolation");
+                return Ok(());
+            }
+            OperationMode::Create | OperationMode::Replace => {
+                let target_hash = context
+                    .target_hash
+                    .as_ref()
+                    .ok_or_else(|| StowawayError::Store("No target hash available".to_string()))?;
+
+                info!(target_hash = %target_hash, "Creating new store version");
+
+                // 1. Create the new store version
+                let version = crate::store::StoreVersion {
+                    hash: target_hash.clone(),
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs(),
+                    source_dir: context.source_dir.clone(),
+                    target_dir: context.target_dir.clone(),
+                };
+
+                let store_path = store_manager.create_version(&version)?;
+                context.store_hash = Some(target_hash.clone());
+
+                // 2. Populate the store with the source files, performing interpolations where applicable.
+                for file_entry in &context.files {
+                    let store_file_path = store_path.join(&file_entry.relative_path);
+
+                    if let Some(parent) = store_file_path.parent() {
+                        std::fs::create_dir_all(parent)?;
+                    }
+
+                    if file_entry.should_interpolate {
+                        let content = std::fs::read_to_string(&file_entry.source_path)?;
+                        let interpolated =
+                            interpolator.interpolate(&content, &context.config.variables)?;
+                        std::fs::write(&store_file_path, interpolated)?;
+                    } else {
+                        std::fs::copy(&file_entry.source_path, &store_file_path)?;
+                    }
+                }
+
+                info!(store_hash = %target_hash, "Created and populated new store version");
             }
         }
 
-        let content_hash = calculate_content_hash(&all_content);
-        let store_path = store_manager.create_version(&content_hash)?;
-
-        // Process each file
-        for file_entry in &context.files {
-            let store_file_path = store_path.join(&file_entry.relative_path);
-
-            if let Some(parent) = store_file_path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-
-            if file_entry.should_interpolate {
-                let content = std::fs::read_to_string(&file_entry.source_path)?;
-                let interpolated = interpolator.interpolate(&content, &context.config.variables)?;
-                std::fs::write(&store_file_path, interpolated)?;
-            } else {
-                std::fs::copy(&file_entry.source_path, &store_file_path)?;
-            }
-        }
-
-        // Update session with new version
-        let version = StoreVersion {
-            hash: content_hash.clone(),
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
-            source_dir: context.source_dir.clone(),
-        };
-
-        store_manager.set_current_version(&version)?;
-        context.store_hash = Some(content_hash.clone());
-
-        info!(store_hash = %content_hash.clone(), "Interpolated files to store");
         Ok(())
     }
 }
@@ -73,6 +85,7 @@ mod tests {
     use crate::config::StowawayConfig;
     use crate::context::StowawayContext;
     use crate::file_entry::FileEntry;
+    use serial_test::serial;
     use std::collections::HashMap;
     use std::fs;
     use tempfile::TempDir;
@@ -84,12 +97,14 @@ mod tests {
         fs::create_dir_all(&target_dir).unwrap();
 
         let mut file_entries = Vec::new();
+        let mut all_content = String::new();
         for (relative_path, content, should_interpolate) in files {
             let source_path = source_dir.join(relative_path);
             if let Some(parent) = source_path.parent() {
                 fs::create_dir_all(parent).unwrap();
             }
             fs::write(&source_path, content).unwrap();
+            all_content.push_str(content);
 
             let target_path = target_dir.join(relative_path);
             file_entries.push(FileEntry {
@@ -109,6 +124,8 @@ mod tests {
             ..Default::default()
         };
 
+        let target_hash = crate::store::calculate_content_hash(&all_content);
+
         StowawayContext {
             config,
             source_dir,
@@ -116,10 +133,14 @@ mod tests {
             dry_run: false,
             files: file_entries,
             store_hash: None,
+            operation_mode: crate::context::OperationMode::Create,
+            current_version: None,
+            target_hash: Some(target_hash),
         }
     }
 
     #[test]
+    #[serial]
     fn test_interpolates_all_vars_in_file() {
         let temp_dir = TempDir::new().unwrap();
         let mut context = create_test_context(
@@ -144,6 +165,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_handles_missing_var_mappings() {
         let temp_dir = TempDir::new().unwrap();
         let mut context = create_test_context(
@@ -172,6 +194,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_copies_non_interpolated_files() {
         let temp_dir = TempDir::new().unwrap();
         let original_content = "This should not be interpolated: @username@";
@@ -193,6 +216,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_mixed_interpolated_and_non_interpolated_files() {
         let temp_dir = TempDir::new().unwrap();
         let mut context = create_test_context(
@@ -223,6 +247,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_creates_nested_directory_structure() {
         let temp_dir = TempDir::new().unwrap();
         let mut context = create_test_context(
@@ -251,6 +276,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_content_hash_consistency() {
         let temp_dir = TempDir::new().unwrap();
         let mut context1 =
@@ -269,6 +295,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_different_content_different_hash() {
         let temp_dir = TempDir::new().unwrap();
         let mut context1 =
