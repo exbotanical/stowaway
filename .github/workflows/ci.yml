@@ -1,10 +1,10 @@
-name: Integration Tests
+name: Continuous Integration
 
 on:
   push:
-    branches: [main, develop]
+    branches: [master]
   pull_request:
-    branches: [main, develop]
+    branches: [master]
 
 env:
   CARGO_TERM_COLOR: always
@@ -20,13 +20,8 @@ jobs:
         id: test
         uses: ./.github/actions/test
 
-      - name: Display test results
-        if: always()
-        run: |
-          echo "Integration test execution completed"
-          if [ "${{ steps.test.outcome }}" != "success" ]; then
-            exit 1
-          fi
+      - name: Get the output data
+        run: echo "ls -la results ${{ steps.test.outputs.files }}"
 
   unit-tests:
     runs-on: ubuntu-latest

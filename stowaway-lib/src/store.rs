@@ -1,4 +1,7 @@
-use crate::error::{Result, StowawayError};
+use crate::{
+    config::STOWAWAY_DIR,
+    error::{Result, StowawayError},
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
@@ -32,7 +35,7 @@ impl FileSystemStoreManager {
             let home_dir = dirs::home_dir().ok_or_else(|| {
                 StowawayError::Store("Could not determine home directory".to_string())
             })?;
-            home_dir.join(".stowaway")
+            home_dir.join(STOWAWAY_DIR)
         };
 
         Ok(Self { store_root })
@@ -131,14 +134,20 @@ impl StoreManager for FileSystemStoreManager {
             return Ok(());
         }
 
+        let current_version = self.get_current_version()?;
+        let current_hash = current_version.as_ref().map(|v| v.hash.as_str());
+
         let mut versions = Vec::new();
         for entry in std::fs::read_dir(&store_dir)? {
             let entry = entry?;
             if entry.file_type()?.is_dir() {
-                if let Some(name) = entry.file_name().to_str() {
-                    if let Ok(metadata) = entry.metadata() {
-                        if let Ok(created) = metadata.created() {
-                            versions.push((name.to_string(), created, entry.path()));
+                if let Some(hash) = entry.file_name().to_str() {
+                    match self.read_metadata(hash) {
+                        Ok(version) => {
+                            versions.push((hash.to_string(), version.timestamp, entry.path()));
+                        }
+                        Err(_) => {
+                            continue;
                         }
                     }
                 }
@@ -147,7 +156,25 @@ impl StoreManager for FileSystemStoreManager {
 
         versions.sort_by(|a, b| b.1.cmp(&a.1));
 
-        for (_, _, path) in versions.iter().skip(keep_count) {
+        let mut versions_to_remove = Vec::new();
+        let mut kept_count = 0;
+
+        for (hash, _, path) in versions.iter() {
+            // Never delete the current active version
+            if Some(hash.as_str()) == current_hash {
+                continue;
+            }
+
+            // Keep the most recent non-current versions up to keep_count
+            if kept_count < keep_count {
+                kept_count += 1;
+            } else {
+                versions_to_remove.push(path);
+            }
+        }
+
+        // Remove the old versions
+        for path in versions_to_remove {
             std::fs::remove_dir_all(path)?;
         }
 
@@ -179,7 +206,6 @@ impl StoreManager for FileSystemStoreManager {
             }
         }
 
-        // Sort by timestamp, newest first
         versions.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
 
         Ok(versions)
@@ -210,7 +236,7 @@ mod tests {
         let hash2 = calculate_content_hash(content);
 
         assert_eq!(hash1, hash2);
-        assert_eq!(hash1.len(), 64); // SHA256 produces 64 character hex string
+        assert_eq!(hash1.len(), 64);
     }
 
     #[test]
@@ -273,7 +299,6 @@ mod tests {
             target_dir: PathBuf::from("/target3"),
         };
 
-        // Create versions using the store manager to ensure metadata files are created
         store_manager.create_version(&version1).unwrap();
         store_manager.create_version(&version2).unwrap();
         store_manager.create_version(&version3).unwrap();
@@ -281,13 +306,11 @@ mod tests {
         let versions = store_manager.list_all_versions().unwrap();
         assert_eq!(versions.len(), 3);
 
-        // Check that all hashes are present
         let hashes: Vec<&str> = versions.iter().map(|v| v.hash.as_str()).collect();
         assert!(hashes.contains(&"abc123"));
         assert!(hashes.contains(&"def456"));
         assert!(hashes.contains(&"ghi789"));
 
-        // Verify they're sorted by timestamp (newest first)
         for i in 1..versions.len() {
             assert!(versions[i - 1].timestamp >= versions[i].timestamp);
         }

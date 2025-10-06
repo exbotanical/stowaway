@@ -20,19 +20,6 @@ pub enum CliCommand {
         verbose: bool,
         quiet: bool,
     },
-    Rollback {
-        hash: String,
-        log_level: Option<String>,
-        log_format: Option<String>,
-        verbose: bool,
-        quiet: bool,
-    },
-    Generations {
-        log_level: Option<String>,
-        log_format: Option<String>,
-        verbose: bool,
-        quiet: bool,
-    },
 }
 
 pub fn build_cli() -> Command {
@@ -110,22 +97,6 @@ pub fn build_cli() -> Command {
                 )
                 .args(logging_args.clone()),
         )
-        .subcommand(
-            Command::new("rollback")
-                .about("Rollback to a previous store version")
-                .arg(
-                    Arg::new("hash")
-                        .value_name("HASH")
-                        .help("Store version hash to rollback to")
-                        .required(true),
-                )
-                .args(logging_args.clone()),
-        )
-        .subcommand(
-            Command::new("generations")
-                .about("List all store versions with timestamps")
-                .args(logging_args),
-        )
 }
 
 pub fn parse_args() -> CliCommand {
@@ -142,6 +113,7 @@ pub fn parse_args() -> CliCommand {
             verbose: sub_matches.get_flag("verbose"),
             quiet: sub_matches.get_flag("quiet"),
         },
+
         Some(("unstow", sub_matches)) => CliCommand::Unstow {
             dry_run: sub_matches.get_flag("dry-run"),
             log_level: sub_matches.get_one::<String>("log-level").cloned(),
@@ -149,19 +121,7 @@ pub fn parse_args() -> CliCommand {
             verbose: sub_matches.get_flag("verbose"),
             quiet: sub_matches.get_flag("quiet"),
         },
-        Some(("rollback", sub_matches)) => CliCommand::Rollback {
-            hash: sub_matches.get_one::<String>("hash").unwrap().clone(),
-            log_level: sub_matches.get_one::<String>("log-level").cloned(),
-            log_format: sub_matches.get_one::<String>("log-format").cloned(),
-            verbose: sub_matches.get_flag("verbose"),
-            quiet: sub_matches.get_flag("quiet"),
-        },
-        Some(("generations", sub_matches)) => CliCommand::Generations {
-            log_level: sub_matches.get_one::<String>("log-level").cloned(),
-            log_format: sub_matches.get_one::<String>("log-format").cloned(),
-            verbose: sub_matches.get_flag("verbose"),
-            quiet: sub_matches.get_flag("quiet"),
-        },
+
         _ => unreachable!("Subcommand is required"),
     }
 }
@@ -310,32 +270,6 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_rollback_command() {
-        let cmd = build_cli();
-        let matches = cmd
-            .try_get_matches_from(vec!["stowaway", "rollback", "abc123def456"])
-            .unwrap();
-
-        let result = match matches.subcommand() {
-            Some(("rollback", sub_matches)) => CliCommand::Rollback {
-                hash: sub_matches.get_one::<String>("hash").unwrap().clone(),
-                log_level: sub_matches.get_one::<String>("log-level").cloned(),
-                log_format: sub_matches.get_one::<String>("log-format").cloned(),
-                verbose: sub_matches.get_flag("verbose"),
-                quiet: sub_matches.get_flag("quiet"),
-            },
-            _ => panic!("Expected rollback subcommand"),
-        };
-
-        match result {
-            CliCommand::Rollback { hash, .. } => {
-                assert_eq!(hash, "abc123def456");
-            }
-            _ => panic!("Expected Rollback command"),
-        }
-    }
-
-    #[test]
     fn test_stow_command_missing_required_args() {
         let cmd = build_cli();
 
@@ -356,13 +290,6 @@ mod tests {
 
         // Missing both
         let result = cmd.clone().try_get_matches_from(vec!["stowaway", "stow"]);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_rollback_command_missing_hash() {
-        let cmd = build_cli();
-        let result = cmd.try_get_matches_from(vec!["stowaway", "rollback"]);
         assert!(result.is_err());
     }
 

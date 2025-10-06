@@ -40,12 +40,10 @@ impl LifecyclePhase for ScanPhase {
 
                 let relative_str = relative_path.to_string_lossy();
 
-                // Skip if matches exclude patterns
                 if exclude_patterns.iter().any(|p| p.matches(&relative_str)) {
                     continue;
                 }
 
-                // Check if should be interpolated
                 let should_interpolate = include_patterns.iter().any(|p| p.matches(&relative_str));
 
                 let target_path = context.target_dir.join(relative_path);
@@ -70,11 +68,11 @@ impl LifecyclePhase for ScanPhase {
 mod tests {
     use super::*;
     use crate::config::{InterpolationConfig, StowawayConfig};
-    use crate::context::{StowawayContext};
+    use crate::context::StowawayContext;
+    use serial_test::serial;
     use std::collections::HashMap;
     use std::fs;
     use tempfile::TempDir;
-    use serial_test::serial;
 
     fn create_test_context(
         temp_dir: &TempDir,

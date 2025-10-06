@@ -1,6 +1,7 @@
 use crate::context::StowawayContext;
-use crate::error::{Result};
+use crate::error::Result;
 
+pub mod cleanup;
 pub mod context;
 pub mod interpolate;
 pub mod link;

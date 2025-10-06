@@ -26,4 +26,4 @@ RUN chmod +x /scripts/*.bash /scripts/*.sh
 
 WORKDIR /
 
-ENTRYPOINT ["/entrypoint.sh"]
+ENTRYPOINT ["/scripts/entrypoint.sh"]

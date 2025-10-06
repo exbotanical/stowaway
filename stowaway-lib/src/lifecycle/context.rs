@@ -6,7 +6,7 @@ use crate::{
     store::{calculate_content_hash, FileSystemStoreManager, StoreManager},
 };
 use std::fs;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 /// The context phase collects information about the current stowaway environment and pre-emptively computes the content hash
 /// so we can determine which subsequent phases need to be executed (and how).
@@ -15,8 +15,17 @@ pub struct ContextPhase;
 
 impl ContextPhase {
     /// Calculates content hash from source files before any processing
+    /// Always includes the stowaway.yaml config file content, regardless of include/exclude patterns
     fn calculate_source_hash(&self, context: &StowawayContext) -> Result<String> {
         let mut all_content = String::new();
+
+        // Always include config file content first, if it exists
+        let config_path = context.source_dir.join("stowaway.yaml");
+        if config_path.exists() {
+            let config_content = fs::read_to_string(&config_path)?;
+            all_content.push_str(&config_content);
+            debug!("Included stowaway.yaml in content hash");
+        }
 
         for entry in walkdir::WalkDir::new(&context.source_dir) {
             let entry = entry?;
@@ -26,6 +35,10 @@ impl ContextPhase {
                 let relative_path = path.strip_prefix(&context.source_dir).map_err(|_| {
                     crate::error::StowawayError::Store("Invalid source path".to_string())
                 })?;
+
+                if relative_path.to_string_lossy() == "stowaway.yaml" {
+                    continue;
+                }
 
                 let should_include = if context.config.interpolation.include_patterns.is_empty() {
                     true
@@ -79,41 +92,21 @@ impl LifecyclePhase for ContextPhase {
                 context.current_version = current_version;
                 return Ok(());
             } else {
-                // If the content has changed...
-                // ...check if we have an existing version that matches the current state (i.e. we just reverted to an old version implicitly)...
-                if let Ok(existing_version) = store_manager.read_metadata(&content_hash) {
-                    // ...a matching store exists but isn't current - switch to it
-                    info!(target_hash = %content_hash, "Switching to existing store version");
-                    context.operation_mode = OperationMode::Switch(existing_version);
-                    context.store_hash = Some(content_hash.clone());
-                    context.current_version = current_version;
-                    context.target_hash = Some(content_hash);
-                    return Ok(());
-                } else {
-                    // The content has changed to a state we've never seen before. We need to compute a new version.
-                    info!(
-                        current_hash = %current.hash,
-                        new_hash = %content_hash,
-                        "Content changed, will replace symlinks"
-                    );
-                    context.operation_mode = OperationMode::Replace;
-                    context.current_version = current_version;
-                    context.target_hash = Some(content_hash);
-                }
+                // The content has changed. We need to compute a new version.
+                info!(
+                    current_hash = %current.hash,
+                    new_hash = %content_hash,
+                    "Content changed, will replace symlinks"
+                );
+                context.operation_mode = OperationMode::Replace;
+                context.current_version = current_version;
+                context.target_hash = Some(content_hash);
             }
         } else {
-            // 3b. No current version - check if store version exists for this hash
-            if let Ok(existing_version) = store_manager.read_metadata(&content_hash) {
-                // Store exists but no current version - switch to it
-                info!(target_hash = %content_hash, "No current version exists, but there was a match. Switching to it.");
-                context.operation_mode = OperationMode::Switch(existing_version);
-                context.store_hash = Some(content_hash.clone());
-                context.target_hash = Some(content_hash);
-            } else {
-                info!("New installation, will create everything");
-                context.operation_mode = OperationMode::Create;
-                context.target_hash = Some(content_hash);
-            }
+            // 3b. No current version - this is a new install
+            info!("New installation, will create everything");
+            context.operation_mode = OperationMode::Create;
+            context.target_hash = Some(content_hash);
         }
 
         debug!(operation_mode = ?context.operation_mode, "Determined operation mode");
@@ -200,10 +193,8 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let mut context = create_test_context(&temp_dir);
 
-        // Set include patterns
         context.config.interpolation.include_patterns = vec!["*.conf".to_string()];
 
-        // Create files - only .conf should be included
         fs::write(context.source_dir.join("included.conf"), "included").unwrap();
         fs::write(context.source_dir.join("excluded.txt"), "excluded").unwrap();
 
@@ -219,10 +210,8 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let mut context = create_test_context(&temp_dir);
 
-        // Set exclude patterns
         context.config.interpolation.exclude_patterns = vec!["*.tmp".to_string()];
 
-        // Create files - .tmp should be excluded
         fs::write(context.source_dir.join("included.txt"), "included").unwrap();
         fs::write(context.source_dir.join("excluded.tmp"), "excluded").unwrap();
 
@@ -230,6 +219,152 @@ mod tests {
         phase.execute(&mut context).unwrap();
 
         assert!(context.target_hash.is_some());
-        // The hash should only include the .txt file content
+    }
+
+    #[test]
+    #[serial]
+    fn test_config_file_always_included_in_hash() {
+        let temp_dir_with_config = TempDir::new().unwrap();
+        let mut context_with_config = create_test_context(&temp_dir_with_config);
+
+        fs::write(
+            context_with_config.source_dir.join("stowaway.yaml"),
+            "variables:\n  test: value",
+        )
+        .unwrap();
+        fs::write(
+            context_with_config.source_dir.join("regular.txt"),
+            "regular content",
+        )
+        .unwrap();
+
+        let phase = ContextPhase;
+        phase.execute(&mut context_with_config).unwrap();
+
+        let hash_with_config = context_with_config.target_hash.clone().unwrap();
+
+        let temp_dir_no_config = TempDir::new().unwrap();
+        let mut context_no_config = create_test_context(&temp_dir_no_config);
+        fs::write(
+            context_no_config.source_dir.join("regular.txt"),
+            "regular content",
+        )
+        .unwrap();
+
+        phase.execute(&mut context_no_config).unwrap();
+        let hash_without_config = context_no_config.target_hash.unwrap();
+
+        assert_ne!(hash_with_config, hash_without_config);
+    }
+
+    #[test]
+    #[serial]
+    fn test_config_changes_trigger_hash_mutation() {
+        let temp_dir = TempDir::new().unwrap();
+        let mut context = create_test_context(&temp_dir);
+
+        fs::write(
+            context.source_dir.join("stowaway.yaml"),
+            "variables:\n  test: value1",
+        )
+        .unwrap();
+        fs::write(context.source_dir.join("regular.txt"), "regular content").unwrap();
+
+        let phase = ContextPhase;
+        phase.execute(&mut context).unwrap();
+
+        let hash1 = context.target_hash.clone().unwrap();
+
+        fs::write(
+            context.source_dir.join("stowaway.yaml"),
+            "variables:\n  test: value2",
+        )
+        .unwrap();
+
+        let mut context2 = create_test_context(&temp_dir);
+        fs::write(context2.source_dir.join("regular.txt"), "regular content").unwrap();
+
+        phase.execute(&mut context2).unwrap();
+        let hash2 = context2.target_hash.unwrap();
+
+        assert_ne!(hash1, hash2);
+    }
+
+    #[test]
+    #[serial]
+    fn test_config_included_even_with_exclude_patterns() {
+        let temp_dir_with_config = TempDir::new().unwrap();
+        let mut context_with_config = create_test_context(&temp_dir_with_config);
+
+        context_with_config.config.interpolation.exclude_patterns = vec!["*.yaml".to_string()];
+
+        fs::write(
+            context_with_config.source_dir.join("stowaway.yaml"),
+            "variables:\n  test: value",
+        )
+        .unwrap();
+        fs::write(
+            context_with_config.source_dir.join("regular.txt"),
+            "regular content",
+        )
+        .unwrap();
+
+        let phase = ContextPhase;
+        phase.execute(&mut context_with_config).unwrap();
+
+        let hash_with_config = context_with_config.target_hash.clone().unwrap();
+
+        let temp_dir_no_config = TempDir::new().unwrap();
+        let mut context_no_config = create_test_context(&temp_dir_no_config);
+        context_no_config.config.interpolation.exclude_patterns = vec!["*.yaml".to_string()];
+        fs::write(
+            context_no_config.source_dir.join("regular.txt"),
+            "regular content",
+        )
+        .unwrap();
+
+        phase.execute(&mut context_no_config).unwrap();
+        let hash_without_config = context_no_config.target_hash.unwrap();
+
+        assert_ne!(hash_with_config, hash_without_config);
+    }
+
+    #[test]
+    #[serial]
+    fn test_config_included_even_with_restrictive_include_patterns() {
+        let temp_dir_with_config = TempDir::new().unwrap();
+        let mut context_with_config = create_test_context(&temp_dir_with_config);
+
+        context_with_config.config.interpolation.include_patterns = vec!["*.txt".to_string()];
+
+        fs::write(
+            context_with_config.source_dir.join("stowaway.yaml"),
+            "variables:\n  test: value",
+        )
+        .unwrap();
+        fs::write(
+            context_with_config.source_dir.join("regular.txt"),
+            "regular content",
+        )
+        .unwrap();
+
+        let phase = ContextPhase;
+        phase.execute(&mut context_with_config).unwrap();
+
+        let hash_with_config = context_with_config.target_hash.clone().unwrap();
+
+        let temp_dir_no_config = TempDir::new().unwrap();
+        let mut context_no_config = create_test_context(&temp_dir_no_config);
+        context_no_config.config.interpolation.include_patterns = vec!["*.txt".to_string()];
+        fs::write(
+            context_no_config.source_dir.join("regular.txt"),
+            "regular content",
+        )
+        .unwrap();
+
+        phase.execute(&mut context_no_config).unwrap();
+        let hash_without_config = context_no_config.target_hash.unwrap();
+
+        assert_ne!(hash_with_config, hash_without_config);
     }
 }

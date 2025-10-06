@@ -1,7 +1,4 @@
 //! Logging configuration and utilities for Stowaway
-//!
-//! This module provides structured logging using the tracing ecosystem,
-//! following Rust best practices for observability.
 
 use tracing::Level;
 use tracing_subscriber::{
@@ -11,12 +8,19 @@ use tracing_subscriber::{
     EnvFilter, Layer,
 };
 
+#[macro_export]
+macro_rules! log_dryrun {
+    ($($arg:tt)*) => {
+        info!("[DRY RUN] {}", format_args!($($arg)*));
+    };
+}
+
 /// Log output format options
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LogFormat {
     /// Human-readable format for CLI usage
     Human,
-    /// JSON format for programmatic consumption
+    /// JSON format for programmatic use-cases
     Json,
 }
 

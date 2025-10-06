@@ -1,5 +1,6 @@
 use crate::error::Result;
 use crate::linking::Linker;
+use crate::log_dryrun;
 use crate::store::StoreManager;
 use crate::{
     context::StowawayContext, lifecycle::LifecyclePhase, linking::FileSystemLinker,
@@ -18,9 +19,9 @@ impl LifecyclePhase for LinkPhase {
         let store_manager = FileSystemStoreManager::new()?;
 
         if context.dry_run {
-            info!(
-                symlink_count = context.files.len(),
-                "DRY RUN: Would create symlinks"
+            log_dryrun!(
+                "Would create symlinks (symlink_count={})",
+                context.files.len(),
             );
             for file_entry in &context.files {
                 info!(
@@ -36,9 +37,6 @@ impl LifecyclePhase for LinkPhase {
             OperationMode::Verify => self.verify_symlinks(context, &linker, &store_manager),
             OperationMode::Create => self.create_symlinks(context, &linker, &store_manager),
             OperationMode::Replace => self.replace_symlinks(context, &linker, &store_manager),
-            OperationMode::Switch(target_version) => {
-                self.switch_symlinks(context, &linker, &store_manager, target_version)
-            }
         }
     }
 }
@@ -139,45 +137,6 @@ impl LinkPhase {
         }
 
         self.create_symlinks(context, linker, store_manager)
-    }
-
-    fn switch_symlinks(
-        &self,
-        context: &StowawayContext,
-        linker: &FileSystemLinker,
-        store_manager: &FileSystemStoreManager,
-        target_version: &crate::store::StoreVersion,
-    ) -> Result<()> {
-        info!(target_hash = %target_version.hash, "Switching to existing store version");
-
-        let store_path = store_manager.get_store_path(&target_version.hash);
-
-        for file_entry in &context.files {
-            if file_entry.target_path.exists() {
-                std::fs::remove_file(&file_entry.target_path)?;
-            }
-        }
-
-        for file_entry in &context.files {
-            let store_file_path = store_path.join(&file_entry.relative_path);
-
-            if !store_file_path.exists() {
-                return Err(StowawayError::Store(format!(
-                    "Store file does not exist: {}",
-                    store_file_path.display()
-                )));
-            }
-
-            linker.create_symlink(&store_file_path, &file_entry.target_path)?;
-        }
-
-        store_manager.set_current_version(target_version)?;
-
-        info!(
-            symlink_count = context.files.len(),
-            "Switched symlinks to target version"
-        );
-        Ok(())
     }
 }
 

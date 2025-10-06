@@ -1,6 +1,7 @@
 use crate::config::{ConfigLoader, YamlConfigLoader};
 use crate::context::StowawayContext;
 use crate::error::{Result, StowawayError};
+use crate::lifecycle::cleanup::CleanupPhase;
 use crate::lifecycle::context::ContextPhase;
 use crate::lifecycle::interpolate::InterpolatePhase;
 use crate::lifecycle::link::LinkPhase;
@@ -8,11 +9,16 @@ use crate::lifecycle::scan::ScanPhase;
 use crate::lifecycle::validate::ValidatePhase;
 use crate::lifecycle::LifecyclePhase;
 use crate::linking::{FileSystemLinker, Linker};
+use crate::log_dryrun;
 use crate::store::{FileSystemStoreManager, StoreManager};
 use std::path::Path;
 use std::time::Instant;
 use tracing::{debug, error, info, instrument, warn};
 use walkdir::WalkDir;
+
+pub struct ExecutionFlags {
+    pub is_dry_run: bool,
+}
 
 pub struct StowawayEngine {
     config_loader: Box<dyn ConfigLoader>,
@@ -29,18 +35,19 @@ impl StowawayEngine {
                 Box::new(ValidatePhase),
                 Box::new(InterpolatePhase),
                 Box::new(LinkPhase),
+                Box::new(CleanupPhase),
             ],
         }
     }
 
-    #[instrument(skip(self), fields(source = %source.display(), target = %target.display(), dry_run))]
-    pub fn execute(&self, source: &Path, target: &Path, dry_run: bool) -> Result<()> {
+    #[instrument(skip(self), fields(source = %source.display(), target = %target.display(), flags))]
+    pub fn execute(&self, source: &Path, target: &Path, flags: ExecutionFlags) -> Result<()> {
         let start_time = Instant::now();
 
         info!(
             source_dir = %source.display(),
             target_dir = %target.display(),
-            dry_run,
+            flags.is_dry_run,
             "Starting stow operation"
         );
 
@@ -52,17 +59,8 @@ impl StowawayEngine {
             "Loaded configuration"
         );
 
-        let mut context = StowawayContext {
-            config,
-            source_dir: source.to_path_buf(),
-            target_dir: target.to_path_buf(),
-            dry_run,
-            files: Vec::new(),
-            store_hash: None,
-            operation_mode: crate::context::OperationMode::Create,
-            current_version: None,
-            target_hash: None,
-        };
+        let mut context =
+            StowawayContext::default(config, source.to_path_buf(), target.to_path_buf(), flags);
 
         for (phase_index, phase) in self.phases.iter().enumerate() {
             let phase_start = Instant::now();
@@ -82,78 +80,6 @@ impl StowawayEngine {
             files_processed = context.files.len(),
             duration_ms = duration.as_millis(),
             "Operation completed successfully"
-        );
-
-        Ok(())
-    }
-
-    #[instrument(skip(self), fields(hash))]
-    pub fn rollback(&self, hash: &str) -> Result<()> {
-        let start_time = Instant::now();
-
-        info!(version = hash, "Starting rollback operation");
-
-        let store_manager = FileSystemStoreManager::new()?;
-        let linker = FileSystemLinker;
-
-        let store_path = store_manager.get_store_path(hash);
-        if !store_path.exists() {
-            error!(version = hash, "Store version does not exist");
-            return Err(StowawayError::Store(format!(
-                "Store version {} does not exist",
-                hash
-            )));
-        }
-
-        debug!(store_path = %store_path.display(), "Found store version");
-
-        let current_version = store_manager.get_current_version()?;
-        if current_version.is_none() {
-            error!("No current version exists - cannot perform rollback");
-            return Err(StowawayError::Store(
-                "No current version exists - cannot perform rollback".to_string(),
-            ));
-        }
-
-        let current_version = current_version.unwrap();
-        info!(
-            current_version = current_version.hash,
-            "Removing current symlinks"
-        );
-
-        let current_store_path = store_manager.get_store_path(&current_version.hash);
-        if current_store_path.exists() {
-            self.remove_symlinks_for_store(
-                &current_store_path,
-                &current_version.target_dir,
-                &linker,
-            )?;
-            debug!("Removed current symlinks");
-        }
-
-        let rollback_version = store_manager.read_metadata(hash).map_err(|e| {
-            error!(
-                version = hash,
-                error = %e,
-                "Could not read metadata for rollback version"
-            );
-            StowawayError::Store(format!(
-                "Could not read metadata for rollback version {}: {}",
-                hash, e
-            ))
-        })?;
-
-        debug!(target_dir = %rollback_version.target_dir.display(), "Creating symlinks for rollback version");
-        // TODO: Replace with a call to LinkPhase
-        self.create_symlinks_for_store(&store_path, &rollback_version.target_dir, &linker)?;
-
-        store_manager.set_current_version(&rollback_version)?;
-
-        let duration = start_time.elapsed();
-        info!(
-            version = hash,
-            duration_ms = duration.as_millis(),
-            "Rollback operation completed successfully"
         );
 
         Ok(())
@@ -196,7 +122,7 @@ impl StowawayEngine {
         }
 
         if dry_run {
-            info!("DRY RUN: Would remove symlinks for current version");
+            log_dryrun!("Would remove symlinks for current version");
             let mut symlink_count = 0;
             for entry in WalkDir::new(&current_store_path) {
                 let entry = entry?;
@@ -213,7 +139,7 @@ impl StowawayEngine {
                     }
                 }
             }
-            info!(symlink_count, "DRY RUN: Would remove symlinks");
+            log_dryrun!("Would remove {} symlinks", symlink_count);
         } else {
             self.remove_symlinks_for_store(
                 &current_store_path,
@@ -234,50 +160,6 @@ impl StowawayEngine {
         info!(
             duration_ms = duration.as_millis(),
             "Unstow operation completed successfully"
-        );
-
-        Ok(())
-    }
-
-    #[instrument(skip(self))]
-    pub fn list_generations(&self) -> Result<()> {
-        let start_time = Instant::now();
-
-        debug!("Starting list generations operation");
-
-        let store_manager = FileSystemStoreManager::new()?;
-
-        let current_version = store_manager.get_current_version()?;
-
-        let all_versions = store_manager.list_all_versions()?;
-
-        if all_versions.is_empty() {
-            debug!("No store versions found.");
-            return Ok(());
-        }
-
-        for version in &all_versions {
-            let is_current = current_version
-                .as_ref()
-                .map(|cv| cv.hash == version.hash)
-                .unwrap_or(false);
-
-            let timestamp = chrono::DateTime::from_timestamp(version.timestamp as i64, 0)
-                .unwrap_or_default()
-                .format("%Y-%m-%d %H:%M:%S");
-
-            if is_current {
-                println!("Current -> {} {}", version.hash, timestamp);
-            } else {
-                println!("           {} {}", version.hash, timestamp);
-            }
-        }
-
-        let duration = start_time.elapsed();
-        info!(
-            versions_count = all_versions.len(),
-            duration_ms = duration.as_millis(),
-            "List generations operation completed successfully"
         );
 
         Ok(())
@@ -305,27 +187,6 @@ impl StowawayEngine {
         }
         Ok(())
     }
-
-    fn create_symlinks_for_store(
-        &self,
-        store_path: &Path,
-        target_dir: &Path,
-        linker: &FileSystemLinker,
-    ) -> Result<()> {
-        for entry in WalkDir::new(store_path) {
-            let entry = entry?;
-            if entry.file_type().is_file() {
-                let relative_path = entry
-                    .path()
-                    .strip_prefix(store_path)
-                    .map_err(|_| StowawayError::Store("Invalid store path".to_string()))?;
-                let target_path = target_dir.join(relative_path);
-
-                linker.create_symlink(entry.path(), &target_path)?;
-            }
-        }
-        Ok(())
-    }
 }
 
 impl Default for StowawayEngine {
@@ -336,6 +197,8 @@ impl Default for StowawayEngine {
 
 #[cfg(test)]
 mod tests {
+    use crate::config::STOWAWAY_CONFIG;
+
     use super::*;
     use serial_test::serial;
     use std::fs;
@@ -354,7 +217,7 @@ interpolation:
   exclude_patterns:
     - "*.tmp"
 "#;
-        fs::write(source_dir.join("stowaway.yaml"), config_content).unwrap();
+        fs::write(source_dir.join(STOWAWAY_CONFIG), config_content).unwrap();
     }
 
     fn create_test_files(source_dir: &Path) {
@@ -386,7 +249,11 @@ interpolation:
         create_test_files(&source_dir);
 
         let engine = StowawayEngine::new();
-        let result = engine.execute(&source_dir, &target_dir, false);
+        let result = engine.execute(
+            &source_dir,
+            &target_dir,
+            ExecutionFlags { is_dry_run: false },
+        );
 
         if let Err(e) = &result {
             eprintln!("Engine execution failed: {}", e);
@@ -419,7 +286,11 @@ interpolation:
         create_test_files(&source_dir);
 
         let engine = StowawayEngine::new();
-        let result = engine.execute(&source_dir, &target_dir, true);
+        let result = engine.execute(
+            &source_dir,
+            &target_dir,
+            ExecutionFlags { is_dry_run: true },
+        );
 
         assert!(result.is_ok());
 
@@ -446,7 +317,11 @@ interpolation:
         fs::write(target_dir.join("config/app.conf"), "existing content").unwrap();
 
         let engine = StowawayEngine::new();
-        let result = engine.execute(&source_dir, &target_dir, false);
+        let result = engine.execute(
+            &source_dir,
+            &target_dir,
+            ExecutionFlags { is_dry_run: false },
+        );
 
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
@@ -465,7 +340,11 @@ interpolation:
         create_test_files(&source_dir);
 
         let engine = StowawayEngine::new();
-        let result = engine.execute(&source_dir, &target_dir, false);
+        let result = engine.execute(
+            &source_dir,
+            &target_dir,
+            ExecutionFlags { is_dry_run: false },
+        );
 
         assert!(result.is_ok());
 
@@ -483,16 +362,6 @@ interpolation:
     }
 
     #[test]
-    fn test_rollback_fails_on_nonexistent_hash() {
-        let engine = StowawayEngine::new();
-        let result = engine.rollback("nonexistent_hash");
-
-        assert!(result.is_err());
-        let error_msg = result.unwrap_err().to_string();
-        assert!(error_msg.contains("does not exist"));
-    }
-
-    #[test]
     #[serial]
     fn test_execute_interpolates_variables() {
         let temp_dir = TempDir::new().unwrap();
@@ -505,7 +374,11 @@ interpolation:
         fs::write(source_dir.join("test.conf"), "user=@user@\ntheme=@theme@").unwrap();
 
         let engine = StowawayEngine::new();
-        let result = engine.execute(&source_dir, &target_dir, false);
+        let result = engine.execute(
+            &source_dir,
+            &target_dir,
+            ExecutionFlags { is_dry_run: false },
+        );
 
         assert!(result.is_ok());
 
@@ -536,7 +409,11 @@ interpolation:
         .unwrap();
 
         let engine = StowawayEngine::new();
-        let result = engine.execute(&source_dir, &target_dir, false);
+        let result = engine.execute(
+            &source_dir,
+            &target_dir,
+            ExecutionFlags { is_dry_run: false },
+        );
 
         assert!(result.is_ok());
 
@@ -560,7 +437,11 @@ interpolation:
         fs::write(source_dir.join("scripts/utils/helper.sh"), "#!/bin/bash").unwrap();
 
         let engine = StowawayEngine::new();
-        let result = engine.execute(&source_dir, &target_dir, false);
+        let result = engine.execute(
+            &source_dir,
+            &target_dir,
+            ExecutionFlags { is_dry_run: false },
+        );
 
         assert!(result.is_ok());
 
@@ -585,7 +466,11 @@ interpolation:
         fs::write(source_dir.join("plain.txt"), "plain text").unwrap();
 
         let engine = StowawayEngine::new();
-        let result = engine.execute(&source_dir, &target_dir, false);
+        let result = engine.execute(
+            &source_dir,
+            &target_dir,
+            ExecutionFlags { is_dry_run: false },
+        );
 
         assert!(result.is_ok());
 

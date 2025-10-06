@@ -1,6 +1,7 @@
 mod cli;
 
 use stowaway_lib::{
+    engine::ExecutionFlags,
     logging::{init_logging, parse_log_format, parse_log_level, LogConfig, LogFormat},
     Stowaway,
 };
@@ -23,20 +24,6 @@ fn main() {
             verbose,
             quiet,
             ..
-        }
-        | cli::CliCommand::Rollback {
-            log_level,
-            log_format,
-            verbose,
-            quiet,
-            ..
-        }
-        | cli::CliCommand::Generations {
-            log_level,
-            log_format,
-            verbose,
-            quiet,
-            ..
         } => create_log_config(log_level, log_format, *verbose, *quiet),
     };
 
@@ -54,10 +41,14 @@ fn main() {
             dry_run,
             force: _,
             ..
-        } => stowaway.run(&source, &target, dry_run),
+        } => stowaway.run(
+            &source,
+            &target,
+            ExecutionFlags {
+                is_dry_run: dry_run,
+            },
+        ),
         cli::CliCommand::Unstow { dry_run, .. } => stowaway.unstow(dry_run),
-        cli::CliCommand::Rollback { hash, .. } => stowaway.rollback(&hash),
-        cli::CliCommand::Generations { .. } => stowaway.list_generations(),
     };
 
     if let Err(e) = result {
@@ -72,7 +63,6 @@ fn create_log_config(
     verbose: bool,
     quiet: bool,
 ) -> LogConfig {
-    // Determine log level
     let level = if quiet {
         Level::ERROR
     } else if verbose {
@@ -89,7 +79,6 @@ fn create_log_config(
         Level::INFO
     };
 
-    // Determine log format
     let format = if let Some(format_str) = log_format {
         match parse_log_format(format_str) {
             Ok(format) => format,

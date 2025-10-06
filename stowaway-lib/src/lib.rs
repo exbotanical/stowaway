@@ -15,6 +15,8 @@ pub use error::{Result, StowawayError};
 
 use std::path::Path;
 
+use crate::engine::ExecutionFlags;
+
 pub struct Stowaway {
     engine: engine::StowawayEngine,
 }
@@ -26,17 +28,8 @@ impl Stowaway {
         }
     }
 
-    pub fn run<P: AsRef<Path>>(&self, source: P, target: P, dry_run: bool) -> Result<()> {
-        self.engine
-            .execute(source.as_ref(), target.as_ref(), dry_run)
-    }
-
-    pub fn rollback(&self, hash: &str) -> Result<()> {
-        self.engine.rollback(hash)
-    }
-
-    pub fn list_generations(&self) -> Result<()> {
-        self.engine.list_generations()
+    pub fn run<P: AsRef<Path>>(&self, source: P, target: P, flags: ExecutionFlags) -> Result<()> {
+        self.engine.execute(source.as_ref(), target.as_ref(), flags)
     }
 
     pub fn unstow(&self, dry_run: bool) -> Result<()> {

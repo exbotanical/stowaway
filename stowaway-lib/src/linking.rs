@@ -1,5 +1,3 @@
-use tracing::debug;
-
 use crate::error::{Result, StowawayError};
 use std::path::Path;
 

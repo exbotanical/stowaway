@@ -27,10 +27,6 @@ impl LifecyclePhase for InterpolatePhase {
                 info!("Verify mode: skipping interpolation");
                 return Ok(());
             }
-            OperationMode::Switch(_) => {
-                info!("Switch mode: skipping interpolation");
-                return Ok(());
-            }
             OperationMode::Create | OperationMode::Replace => {
                 let target_hash = context
                     .target_hash
@@ -151,10 +147,8 @@ mod tests {
         let phase = InterpolatePhase;
         phase.execute(&mut context).unwrap();
 
-        // Verify store hash was set
         assert!(context.store_hash.is_some());
 
-        // Verify interpolated content in store
         let store_manager = FileSystemStoreManager::new().unwrap();
         let store_path = store_manager.get_store_path(context.store_hash.as_ref().unwrap());
         let interpolated_file = store_path.join("config.txt");
@@ -180,10 +174,8 @@ mod tests {
         let phase = InterpolatePhase;
         phase.execute(&mut context).unwrap();
 
-        // Verify store hash was set
         assert!(context.store_hash.is_some());
 
-        // Verify missing variables are left unchanged
         let store_manager = FileSystemStoreManager::new().unwrap();
         let store_path = store_manager.get_store_path(context.store_hash.as_ref().unwrap());
         let interpolated_file = store_path.join("config.txt");

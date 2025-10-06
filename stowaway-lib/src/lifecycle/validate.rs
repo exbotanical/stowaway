@@ -53,14 +53,14 @@ impl LifecyclePhase for ValidatePhase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{InterpolationConfig, StowawayConfig};
+    use crate::config::{InterpolationConfig, StowawayConfig, STOWAWAY_STORE_PATH};
     use crate::context::StowawayContext;
     use crate::file_entry::FileEntry;
+    use serial_test::serial;
     use std::collections::HashMap;
     use std::fs;
     use std::os::unix::fs as unix_fs;
     use tempfile::TempDir;
-    use serial_test::serial;
 
     fn create_test_context(temp_dir: &TempDir) -> StowawayContext {
         let source_dir = temp_dir.path().join("source");
@@ -167,7 +167,9 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let mut context = create_test_context(&temp_dir);
 
-        let store_dir = temp_dir.path().join(".stowaway/store/abc123");
+        let store_dir = temp_dir
+            .path()
+            .join(format!(".{}/abc123", STOWAWAY_STORE_PATH));
         fs::create_dir_all(&store_dir).unwrap();
         let store_file = store_dir.join("config.txt");
         fs::write(&store_file, "store content").unwrap();
@@ -273,7 +275,9 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let mut context = create_test_context(&temp_dir);
 
-        let store_dir = temp_dir.path().join(".stowaway/store/abc123");
+        let store_dir = temp_dir
+            .path()
+            .join(format!(".{}/abc123", STOWAWAY_STORE_PATH));
         fs::create_dir_all(&store_dir).unwrap();
         let store_file = store_dir.join("managed.txt");
         fs::write(&store_file, "store content").unwrap();

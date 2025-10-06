@@ -5,7 +5,6 @@ alias it='(_shpec_failures=0; alias setup &>/dev/null && { setup; unalias setup;
 alias ti='return "$_shpec_failures"); (( _shpec_failures += $?, _shpec_examples++ ))'
 alias end_describe='end; unalias setup teardown 2>/dev/null'
 
-
 assert_symlink_exists() {
   local file="$1"
   [[ -L "$file" ]]
@@ -42,18 +41,6 @@ assert_symlink_target_contains() {
   }
 
   assert equal 0 -1
-}
-
-# Retrieves the latest generation hash
-get_current_store_hash() {
-  local generations_output
-  generations_output=$(run_stowaway generations 2>/dev/null)
-
-  if [[ $? -eq 0 && -n "$generations_output" ]]; then
-    echo "$generations_output" | grep "^Current ->" | awk '{print $3}'
-  else
-    echo ""
-  fi
 }
 
 assert_symlink_points_to_store() {

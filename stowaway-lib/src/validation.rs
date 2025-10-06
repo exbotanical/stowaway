@@ -1,3 +1,4 @@
+use crate::config::STOWAWAY_STORE_PATH;
 use crate::error::Result;
 use std::path::Path;
 
@@ -59,7 +60,7 @@ impl Validator for FileSystemValidator {
         match std::fs::read_link(path) {
             Ok(target) => {
                 let target_str = target.to_string_lossy();
-                Ok(target_str.contains(".stowaway/store/"))
+                Ok(target_str.contains(STOWAWAY_STORE_PATH))
             }
             Err(_) => Ok(false),
         }
