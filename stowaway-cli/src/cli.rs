@@ -218,7 +218,6 @@ mod tests {
                 "-t",
                 "/home/user",
                 "-n",
-                "-f",
             ])
             .unwrap();
 
