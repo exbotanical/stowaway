@@ -7,7 +7,6 @@ pub enum CliCommand {
         source: PathBuf,
         target: PathBuf,
         dry_run: bool,
-        force: bool,
         log_level: Option<String>,
         log_format: Option<String>,
         verbose: bool,
@@ -76,13 +75,6 @@ pub fn build_cli() -> Command {
                         .help("Show what would be done without making changes")
                         .action(ArgAction::SetTrue),
                 )
-                .arg(
-                    Arg::new("force")
-                        .short('f')
-                        .long("force")
-                        .help("Force operation even if conflicts exist")
-                        .action(ArgAction::SetTrue),
-                )
                 .args(logging_args.clone()),
         )
         .subcommand(
@@ -107,7 +99,6 @@ pub fn parse_args() -> CliCommand {
             source: PathBuf::from(sub_matches.get_one::<String>("source").unwrap()),
             target: PathBuf::from(sub_matches.get_one::<String>("target").unwrap()),
             dry_run: sub_matches.get_flag("dry-run"),
-            force: sub_matches.get_flag("force"),
             log_level: sub_matches.get_one::<String>("log-level").cloned(),
             log_format: sub_matches.get_one::<String>("log-format").cloned(),
             verbose: sub_matches.get_flag("verbose"),
@@ -149,7 +140,6 @@ mod tests {
                 source: PathBuf::from(sub_matches.get_one::<String>("source").unwrap()),
                 target: PathBuf::from(sub_matches.get_one::<String>("target").unwrap()),
                 dry_run: sub_matches.get_flag("dry-run"),
-                force: sub_matches.get_flag("force"),
                 log_level: sub_matches.get_one::<String>("log-level").cloned(),
                 log_format: sub_matches.get_one::<String>("log-format").cloned(),
                 verbose: sub_matches.get_flag("verbose"),
@@ -163,13 +153,11 @@ mod tests {
                 source,
                 target,
                 dry_run,
-                force,
                 ..
             } => {
                 assert_eq!(source, PathBuf::from("/home/user/dotfiles"));
                 assert_eq!(target, PathBuf::from("/home/user"));
                 assert!(!dry_run);
-                assert!(!force);
             }
             _ => panic!("Expected Stow command"),
         }
@@ -187,7 +175,6 @@ mod tests {
                 "--target",
                 "/home/user",
                 "--dry-run",
-                "--force",
             ])
             .unwrap();
 
@@ -196,7 +183,6 @@ mod tests {
                 source: PathBuf::from(sub_matches.get_one::<String>("source").unwrap()),
                 target: PathBuf::from(sub_matches.get_one::<String>("target").unwrap()),
                 dry_run: sub_matches.get_flag("dry-run"),
-                force: sub_matches.get_flag("force"),
                 log_level: sub_matches.get_one::<String>("log-level").cloned(),
                 log_format: sub_matches.get_one::<String>("log-format").cloned(),
                 verbose: sub_matches.get_flag("verbose"),
@@ -210,13 +196,11 @@ mod tests {
                 source,
                 target,
                 dry_run,
-                force,
                 ..
             } => {
                 assert_eq!(source, PathBuf::from("/home/user/dotfiles"));
                 assert_eq!(target, PathBuf::from("/home/user"));
                 assert!(dry_run);
-                assert!(force);
             }
             _ => panic!("Expected Stow command"),
         }
@@ -234,7 +218,6 @@ mod tests {
                 "-t",
                 "/home/user",
                 "-n",
-                "-f",
             ])
             .unwrap();
 
@@ -243,7 +226,6 @@ mod tests {
                 source: PathBuf::from(sub_matches.get_one::<String>("source").unwrap()),
                 target: PathBuf::from(sub_matches.get_one::<String>("target").unwrap()),
                 dry_run: sub_matches.get_flag("dry-run"),
-                force: sub_matches.get_flag("force"),
                 log_level: sub_matches.get_one::<String>("log-level").cloned(),
                 log_format: sub_matches.get_one::<String>("log-format").cloned(),
                 verbose: sub_matches.get_flag("verbose"),
@@ -257,13 +239,11 @@ mod tests {
                 source,
                 target,
                 dry_run,
-                force,
                 ..
             } => {
                 assert_eq!(source, PathBuf::from("/home/user/dotfiles"));
                 assert_eq!(target, PathBuf::from("/home/user"));
                 assert!(dry_run);
-                assert!(force);
             }
             _ => panic!("Expected Stow command"),
         }

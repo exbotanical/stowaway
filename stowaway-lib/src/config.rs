@@ -8,7 +8,7 @@ pub const STOWAWAY_DIR: &str = ".stowaway";
 pub const STOWAWAY_CONFIG: &str = "stowaway.yaml";
 pub const STOWAWAY_STORE_PATH: &str = ".stowaway/store/";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct StowawayConfig {
     pub variables: HashMap<String, String>,
     pub interpolation: InterpolationConfig,
@@ -18,15 +18,6 @@ pub struct StowawayConfig {
 pub struct InterpolationConfig {
     pub include_patterns: Vec<String>,
     pub exclude_patterns: Vec<String>,
-}
-
-impl Default for StowawayConfig {
-    fn default() -> Self {
-        Self {
-            variables: HashMap::new(),
-            interpolation: InterpolationConfig::default(),
-        }
-    }
 }
 
 impl Default for InterpolationConfig {

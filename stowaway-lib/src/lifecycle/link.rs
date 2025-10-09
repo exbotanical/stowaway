@@ -193,7 +193,7 @@ mod tests {
         }
     }
 
-    fn setup_store_with_files(store_hash: &str, files: Vec<(&str, &str)>) -> () {
+    fn setup_store_with_files(store_hash: &str, files: Vec<(&str, &str)>) {
         let store_manager = FileSystemStoreManager::new().unwrap();
 
         let version = StoreVersion {
@@ -372,7 +372,7 @@ mod tests {
     #[serial]
     fn test_multiple_files_partial_failure() {
         let temp_dir = TempDir::new().unwrap();
-        let _store_temp = setup_store_with_files(
+        setup_store_with_files(
             "test_hash_partial",
             vec![("good.txt", "good content"), ("bad.txt", "bad content")],
         );
@@ -437,8 +437,7 @@ mod tests {
     fn test_symlink_points_to_correct_store_location() {
         let temp_dir = TempDir::new().unwrap();
         let test_content = "specific test content";
-        let _store_temp =
-            setup_store_with_files("test_hash_verify", vec![("verify.txt", test_content)]);
+        setup_store_with_files("test_hash_verify", vec![("verify.txt", test_content)]);
 
         let mut context = create_test_context(&temp_dir, vec![("verify.txt", test_content)], false);
         context.store_hash = Some("test_hash_verify".to_string());
