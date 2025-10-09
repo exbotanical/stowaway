@@ -39,7 +39,6 @@ fn main() {
             source,
             target,
             dry_run,
-            force: _,
             ..
         } => stowaway.run(
             &source,

@@ -2,20 +2,15 @@ use crate::{
     config::StowawayConfig, engine::ExecutionFlags, file_entry::FileEntry, store::StoreVersion,
 };
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum OperationMode {
     /// Same content as current version, verify existing symlinks
     Verify,
     /// New installation, create everything from scratch
+    #[default]
     Create,
     /// Content changed, replace existing symlinks with new ones
     Replace,
-}
-
-impl Default for OperationMode {
-    fn default() -> Self {
-        OperationMode::Create
-    }
 }
 
 pub struct StowawayContext {
